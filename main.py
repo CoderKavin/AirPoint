@@ -7,7 +7,14 @@ import math
 from collections import deque
 
 class HandCenterGestureController:
-    def __init__(self):
+    def __init__(self, enable_gaze_detection=True):
+        # Initialize ALL attributes FIRST to avoid AttributeError
+        self.gaze_detection_enabled = enable_gaze_detection
+        self.face_detected = False
+        self.looking_at_screen = False
+        self.face_detection_history = deque(maxlen=5)
+        self.gaze_cooldown = 0
+        
         # Initialize MediaPipe
         self.mp_hands = mp.solutions.hands
         self.hands = self.mp_hands.Hands(
@@ -17,6 +24,20 @@ class HandCenterGestureController:
             min_tracking_confidence=0.7
         )
         self.mp_draw = mp.solutions.drawing_utils
+        
+        # Add face detection for gaze awareness (only if enabled)
+        if self.gaze_detection_enabled:
+            self.mp_face_mesh = mp.solutions.face_mesh
+            self.face_mesh = self.mp_face_mesh.FaceMesh(
+                static_image_mode=False,
+                max_num_faces=1,
+                refine_landmarks=True,
+                min_detection_confidence=0.5,
+                min_tracking_confidence=0.5
+            )
+        else:
+            self.mp_face_mesh = None
+            self.face_mesh = None
         
         # Initialize camera
         self.cap = cv2.VideoCapture(0)
@@ -55,12 +76,40 @@ class HandCenterGestureController:
         
         print("🚀 HAND CENTER TRACKING CONTROLLER!")
         print("Uses whole hand center for natural movement")
+        print(f"👁️ GAZE DETECTION: {'ENABLED' if self.gaze_detection_enabled else 'DISABLED'}")
+        if self.gaze_detection_enabled:
+            print("   - Only works when looking at screen!")
+        else:
+            print("   - Always active (no gaze checking)")
         print("✋ Open hand → Move cursor (follows hand center)")
         print("🤏 Quick pinch → Left click")
         print("🤏 Hold pinch 0.4s → DRAG MODE (hand center controls drag)")
         print("✊ Fist → Right click")
         print("📱 Two fingers (index+middle) → Scroll up/down (thumb free!)")
+        print("🔧 Press 'g' to toggle gaze detection on/off")
         print("Press 'q' to quit")
+
+    def toggle_gaze_detection(self):
+        """Toggle gaze detection on/off"""
+        self.gaze_detection_enabled = not self.gaze_detection_enabled
+        
+        if self.gaze_detection_enabled:
+            # Initialize face detection if it wasn't already
+            if self.mp_face_mesh is None:
+                self.mp_face_mesh = mp.solutions.face_mesh
+                self.face_mesh = self.mp_face_mesh.FaceMesh(
+                    static_image_mode=False,
+                    max_num_faces=1,
+                    refine_landmarks=True,
+                    min_detection_confidence=0.5,
+                    min_tracking_confidence=0.5
+                )
+            print("👁️ GAZE DETECTION ENABLED - Only works when looking at screen")
+        else:
+            print("👁️ GAZE DETECTION DISABLED - Always active")
+            # Reset gaze state to allow control
+            self.looking_at_screen = True
+            self.face_detected = True
 
     def get_landmarks(self, hand_landmarks):
         """Extract hand landmark coordinates"""
@@ -133,6 +182,77 @@ class HandCenterGestureController:
         """Simple open hand detection"""
         extended_count, _ = self.count_extended_fingers(landmarks)
         return extended_count >= 3
+
+    def detect_face_and_gaze(self, frame):
+        """Detect if user's face is visible and roughly looking at screen"""
+        # If gaze detection is disabled, always return True
+        if not self.gaze_detection_enabled:
+            self.face_detected = True
+            self.looking_at_screen = True
+            return True
+        
+        # If face_mesh is not initialized, return True (fallback)
+        if self.face_mesh is None:
+            self.face_detected = True
+            self.looking_at_screen = True
+            return True
+        
+        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        face_results = self.face_mesh.process(rgb_frame)
+        
+        face_detected = False
+        looking_forward = False
+        
+        if face_results.multi_face_landmarks:
+            for face_landmarks in face_results.multi_face_landmarks:
+                face_detected = True
+                
+                # Get key landmarks for gaze estimation
+                landmarks = face_landmarks.landmark
+                
+                # Key points for gaze direction (simplified approach)
+                nose_tip = landmarks[1]  # Nose tip
+                left_eye = landmarks[33]  # Left eye corner
+                right_eye = landmarks[263]  # Right eye corner
+                
+                # Simple forward-facing detection based on eye symmetry and nose position
+                eye_distance = abs(left_eye.x - right_eye.x)
+                nose_center_x = nose_tip.x
+                face_center_x = (left_eye.x + right_eye.x) / 2
+                
+                # Check if face is roughly centered and forward-facing
+                symmetry_threshold = 0.02
+                nose_offset = abs(nose_center_x - face_center_x)
+                eye_width_threshold = 0.08  # Minimum eye distance for forward face
+                
+                if eye_distance > eye_width_threshold and nose_offset < symmetry_threshold:
+                    looking_forward = True
+                    
+                break
+        
+        # Update detection history for smoothing
+        self.face_detection_history.append((face_detected, looking_forward))
+        
+        # Smooth decision based on recent history
+        recent_detections = list(self.face_detection_history)
+        if len(recent_detections) >= 3:
+            face_count = sum(1 for fd, _ in recent_detections if fd)
+            gaze_count = sum(1 for _, lf in recent_detections if lf)
+            
+            # Need majority of recent frames to have face + forward gaze
+            self.face_detected = face_count >= 3
+            self.looking_at_screen = gaze_count >= 2
+        
+        return self.face_detected and self.looking_at_screen
+
+    def is_safe_to_control(self):
+        """Check if it's safe to perform gestures"""
+        # If gaze detection is disabled, always return True
+        if not self.gaze_detection_enabled:
+            return True
+        
+        # Otherwise, check if user is looking at screen
+        return self.looking_at_screen
 
     def detect_two_finger_scroll(self, landmarks):
         """Detect two-finger scroll gesture - index and middle up, IGNORE thumb position"""
@@ -214,7 +334,38 @@ class HandCenterGestureController:
         return True
 
     def detect_gestures(self, landmarks):
-        """Gesture detection using HAND CENTER tracking"""
+        """Gesture detection using HAND CENTER tracking - respects gaze setting"""
+        
+        # SAFETY CHECK: Only proceed if it's safe to control
+        if not self.is_safe_to_control():
+            # Clean up any active gestures for safety
+            if self.is_dragging:
+                try:
+                    pyautogui.mouseUp(button='left')
+                    if self.gaze_detection_enabled:
+                        print("🛑 SAFETY: Stopped drag - user not looking at screen")
+                    else:
+                        print("🛑 Stopped drag")
+                except:
+                    pass
+                self.is_dragging = False
+                self.drag_start_hand_pos = None
+                self.drag_start_screen_pos = None
+                self.pinch_start_time = None
+            
+            # Reset scroll mode
+            if self.scroll_reference_y is not None:
+                if self.gaze_detection_enabled:
+                    print("🛑 SAFETY: Exited scroll - user not looking at screen")
+                else:
+                    print("🛑 Exited scroll")
+                self.scroll_reference_y = None
+                self.scroll_accumulated = 0
+            
+            # Reset other states
+            self.prev_hand_center = None
+            return "safety_disabled" if self.gaze_detection_enabled else "disabled"
+        
         current_time = time.time()
         
         # Calculate hand center
@@ -406,7 +557,7 @@ class HandCenterGestureController:
         return "idle"
 
     def draw_debug_info(self, frame, landmarks, gesture, extended_count, finger_states):
-        """Debug visualization focusing on HAND CENTER tracking and two-finger scroll"""
+        """Debug visualization with toggleable gaze detection status"""
         frame_height, frame_width = frame.shape[:2]
         
         # Calculate hand center
@@ -420,54 +571,84 @@ class HandCenterGestureController:
         pinch_distance = self.calculate_distance(thumb_tip, index_tip)
         is_pinched = pinch_distance < 0.05
         
-        # Clean background
-        cv2.rectangle(frame, (10, 10), (600, 240), (0, 0, 0), -1)
+        # Clean background - larger for gaze info
+        cv2.rectangle(frame, (10, 10), (650, 300), (0, 0, 0), -1)
+        
+        # GAZE DETECTION STATUS
+        if self.gaze_detection_enabled:
+            gaze_color = (0, 255, 0) if self.looking_at_screen else (0, 0, 255)
+            gaze_text = "ACTIVE" if self.looking_at_screen else "DISABLED"
+            cv2.putText(frame, f"👁️ Gaze Control: {gaze_text}", (20, 30),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, gaze_color, 2)
+            
+            face_status = "DETECTED" if self.face_detected else "NOT FOUND"
+            face_color = (255, 255, 255) if self.face_detected else (100, 100, 100)
+            cv2.putText(frame, f"Face: {face_status}", (20, 60),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, face_color, 2)
+        else:
+            cv2.putText(frame, "👁️ Gaze Control: OFF (Always Active)", (20, 30),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
+            cv2.putText(frame, "Press 'g' to enable gaze detection", (20, 60),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 2)
         
         # Current gesture
-        color = (0, 255, 0) if gesture != "idle" else (255, 255, 255)
-        if "drag" in gesture:
-            color = (255, 0, 128)  # Pink for drag
-        elif "pinch_waiting" in gesture:
-            color = (255, 128, 0)  # Orange for waiting
-        elif "two_finger_scroll" in gesture or "scroll_mode" in gesture:
-            color = (0, 255, 255)  # Cyan for scroll
+        if self.is_safe_to_control():
+            color = (0, 255, 0) if gesture != "idle" else (255, 255, 255)
+            if "drag" in gesture:
+                color = (255, 0, 128)  # Pink for drag
+            elif "pinch_waiting" in gesture:
+                color = (255, 128, 0)  # Orange for waiting
+            elif "two_finger_scroll" in gesture or "scroll_mode" in gesture:
+                color = (0, 255, 255)  # Cyan for scroll
+        else:
+            color = (100, 100, 100)  # Gray when disabled
+            gesture = "safety_disabled" if self.gaze_detection_enabled else "disabled"
         
-        cv2.putText(frame, f"Gesture: {gesture}", (20, 40),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+        cv2.putText(frame, f"Gesture: {gesture}", (20, 90),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
         
-        # HAND CENTER focus
-        cv2.putText(frame, f"Hand Center: ({hand_center[0]:.4f}, {hand_center[1]:.4f})", (20, 70),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
+        # HAND CENTER focus (only show if active)
+        if self.is_safe_to_control():
+            cv2.putText(frame, f"Hand Center: ({hand_center[0]:.4f}, {hand_center[1]:.4f})", (20, 120),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
         
         # Two-finger scroll status
-        if self.scroll_reference_y is not None:
-            cv2.putText(frame, f"📱 SCROLL MODE - Move 2 fingers up/down", (20, 100),
+        if self.scroll_reference_y is not None and self.is_safe_to_control():
+            cv2.putText(frame, f"📱 SCROLL MODE - Move 2 fingers up/down", (20, 150),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
-            cv2.putText(frame, f"Ref Y: {self.scroll_reference_y:.4f}, Acc: {self.scroll_accumulated:.3f}", (20, 130),
+            cv2.putText(frame, f"Ref Y: {self.scroll_reference_y:.4f}, Acc: {self.scroll_accumulated:.3f}", (20, 180),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
         
         # Drag state
-        elif self.is_dragging:
-            cv2.putText(frame, "🖱️ ACTIVELY DRAGGING!", (20, 100),
+        elif self.is_dragging and self.is_safe_to_control():
+            cv2.putText(frame, "🖱️ ACTIVELY DRAGGING!", (20, 150),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 128), 2)
             if self.drag_start_hand_pos is not None:
                 start_x, start_y = self.drag_start_hand_pos
-                cv2.putText(frame, f"Drag start: ({start_x:.4f}, {start_y:.4f})", (20, 130),
+                cv2.putText(frame, f"Drag start: ({start_x:.4f}, {start_y:.4f})", (20, 180),
                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
-        elif self.pinch_start_time is not None:
+        elif self.pinch_start_time is not None and self.is_safe_to_control():
             remaining = max(0, self.drag_threshold - (time.time() - self.pinch_start_time))
             if remaining > 0:
-                cv2.putText(frame, f"Hold {remaining:.1f}s more for drag", (20, 100),
+                cv2.putText(frame, f"Hold {remaining:.1f}s more for drag", (20, 150),
                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 2)
         
-        # Extended fingers info
+        # Show control status
+        elif not self.is_safe_to_control():
+            if self.gaze_detection_enabled:
+                cv2.putText(frame, "👁️ Look at screen to activate controls", (20, 150),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 128, 0), 2)
+            else:
+                cv2.putText(frame, "✋ Controls active (gaze detection OFF)", (20, 150),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+        
+        # Extended fingers info (always show for debugging)
         is_open_hand = self.detect_open_hand(landmarks)
-        cv2.putText(frame, f"Extended fingers: {extended_count}/5", (20, 160),
+        cv2.putText(frame, f"Extended fingers: {extended_count}/5", (20, 210),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
         
         # Show finger states for two-finger detection (highlight thumb ignorance)
         finger_names = ["Thumb*", "Index", "Middle", "Ring", "Pinky"]
-        finger_colors = [(150, 150, 150), (255, 255, 255), (255, 255, 255), (255, 255, 255), (255, 255, 255)]
         finger_text = ""
         for i, (name, state) in enumerate(zip(finger_names, finger_states)):
             status = "✓" if state else "✗"
@@ -476,16 +657,20 @@ class HandCenterGestureController:
             else:
                 finger_text += f"{name}: {status} | "
         
-        cv2.putText(frame, finger_text[:-3], (20, 180),
+        cv2.putText(frame, finger_text[:-3], (20, 230),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1)
         
         open_hand_color = (0, 255, 0) if is_open_hand else (255, 0, 0)
-        cv2.putText(frame, f"Open hand: {'YES' if is_open_hand else 'NO'}", (20, 200),
+        cv2.putText(frame, f"Open hand: {'YES' if is_open_hand else 'NO'}", (20, 250),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, open_hand_color, 2)
         
         # Instructions
-        cv2.putText(frame, "Scroll: Index+Middle up, Ring+Pinky down (thumb free!)", (20, 220),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 255), 2)
+        if self.gaze_detection_enabled:
+            cv2.putText(frame, "👁️ GAZE MODE: Look at screen + gesture controls | 'g' to toggle", (20, 270),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 255), 2)
+        else:
+            cv2.putText(frame, "🔓 FREE MODE: Gesture controls always active | 'g' to toggle", (20, 270),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 2)
         
         # Visual indicators
         hand_center_pos = (int(hand_center[0] * frame_width), int(hand_center[1] * frame_height))
@@ -493,39 +678,45 @@ class HandCenterGestureController:
         index_pos = (int(index_tip[0] * frame_width), int(index_tip[1] * frame_height))
         middle_pos = (int(middle_tip[0] * frame_width), int(middle_tip[1] * frame_height))
         
-        # Pinch line
-        line_color = (255, 0, 128) if self.is_dragging else (0, 255, 0) if is_pinched else (255, 255, 255)
-        line_thickness = 6 if self.is_dragging else 3 if is_pinched else 2
-        cv2.line(frame, thumb_pos, index_pos, line_color, line_thickness)
-        
-        # Two-finger scroll indicators
-        if self.scroll_reference_y is not None:
-            # Highlight the two scroll fingers
-            cv2.circle(frame, index_pos, 15, (0, 255, 255), 4)
-            cv2.circle(frame, middle_pos, 15, (0, 255, 255), 4)
-            cv2.line(frame, index_pos, middle_pos, (0, 255, 255), 4)
-            cv2.putText(frame, "SCROLL", (index_pos[0] + 20, index_pos[1] - 20),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
-        
-        # Highlight HAND CENTER as the main tracking point
-        center_color = (255, 0, 128) if self.is_dragging else (0, 255, 255) if self.scroll_reference_y else (0, 255, 255)
-        center_size = 20 if self.is_dragging else 15
-        cv2.circle(frame, hand_center_pos, center_size, center_color, 4)
-        cv2.putText(frame, "HAND CENTER", (hand_center_pos[0] + 25, hand_center_pos[1] - 25),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, center_color, 2)
-        
-        # Show drag start position if dragging
-        if self.is_dragging and self.drag_start_hand_pos is not None:
-            start_screen_x = int(self.drag_start_hand_pos[0] * frame_width)
-            start_screen_y = int(self.drag_start_hand_pos[1] * frame_height)
-            cv2.circle(frame, (start_screen_x, start_screen_y), 12, (255, 255, 0), 3)
-            cv2.line(frame, (start_screen_x, start_screen_y), hand_center_pos, (255, 255, 0), 3)
-            cv2.putText(frame, "START", (start_screen_x + 15, start_screen_y - 15),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 0), 2)
+        # Only show active visuals when safe to control
+        if self.is_safe_to_control():
+            # Pinch line
+            line_color = (255, 0, 128) if self.is_dragging else (0, 255, 0) if is_pinched else (255, 255, 255)
+            line_thickness = 6 if self.is_dragging else 3 if is_pinched else 2
+            cv2.line(frame, thumb_pos, index_pos, line_color, line_thickness)
+            
+            # Two-finger scroll indicators
+            if self.scroll_reference_y is not None:
+                # Highlight the two scroll fingers
+                cv2.circle(frame, index_pos, 15, (0, 255, 255), 4)
+                cv2.circle(frame, middle_pos, 15, (0, 255, 255), 4)
+                cv2.line(frame, index_pos, middle_pos, (0, 255, 255), 4)
+                cv2.putText(frame, "SCROLL", (index_pos[0] + 20, index_pos[1] - 20),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+            
+            # Highlight HAND CENTER as the main tracking point
+            center_color = (255, 0, 128) if self.is_dragging else (0, 255, 255) if self.scroll_reference_y else (0, 255, 255)
+            center_size = 20 if self.is_dragging else 15
+            cv2.circle(frame, hand_center_pos, center_size, center_color, 4)
+            cv2.putText(frame, "HAND CENTER", (hand_center_pos[0] + 25, hand_center_pos[1] - 25),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, center_color, 2)
+            
+            # Show drag start position if dragging
+            if self.is_dragging and self.drag_start_hand_pos is not None:
+                start_screen_x = int(self.drag_start_hand_pos[0] * frame_width)
+                start_screen_y = int(self.drag_start_hand_pos[1] * frame_height)
+                cv2.circle(frame, (start_screen_x, start_screen_y), 12, (255, 255, 0), 3)
+                cv2.line(frame, (start_screen_x, start_screen_y), hand_center_pos, (255, 255, 0), 3)
+                cv2.putText(frame, "START", (start_screen_x + 15, start_screen_y - 15),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 0), 2)
+        else:
+            # Show dimmed hand when not safe to control
+            cv2.circle(frame, hand_center_pos, 10, (100, 100, 100), 2)
+            cv2.line(frame, thumb_pos, index_pos, (100, 100, 100), 1)
 
     def run(self):
         """Main control loop"""
-        print("🚀 Starting HAND CENTER tracking controller with two-finger scroll...")
+        print("🚀 Starting HAND CENTER tracking controller with toggleable gaze detection...")
         
         while True:
             ret, frame = self.cap.read()
@@ -534,12 +725,17 @@ class HandCenterGestureController:
             
             frame = cv2.flip(frame, 1)
             rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            results = self.hands.process(rgb_frame)
+            
+            # Process both hand and face detection
+            hand_results = self.hands.process(rgb_frame)
+            
+            # Detect face and gaze (respects gaze_detection_enabled setting)
+            user_looking = self.detect_face_and_gaze(frame)
             
             gesture = "no_hand"
             
-            if results.multi_hand_landmarks:
-                for hand_landmarks in results.multi_hand_landmarks:
+            if hand_results.multi_hand_landmarks:
+                for hand_landmarks in hand_results.multi_hand_landmarks:
                     self.mp_draw.draw_landmarks(
                         frame, hand_landmarks, self.mp_hands.HAND_CONNECTIONS,
                         self.mp_draw.DrawingSpec(color=(0, 255, 0), thickness=2, circle_radius=2),
@@ -569,14 +765,29 @@ class HandCenterGestureController:
                 self.scroll_accumulated = 0
                 self.scroll_exit_counter = 0
                 
-                cv2.rectangle(frame, (10, 10), (300, 60), (0, 0, 0), -1)
-                cv2.putText(frame, "Show your hand", (20, 40),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+                cv2.rectangle(frame, (10, 10), (500, 100), (0, 0, 0), -1)
+                
+                if self.gaze_detection_enabled:
+                    cv2.putText(frame, f"👁️ Gaze: {'ACTIVE' if self.looking_at_screen else 'DISABLED'}", (20, 40),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0) if self.looking_at_screen else (0, 0, 255), 2)
+                    cv2.putText(frame, "Show your hand", (20, 70),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255) if self.looking_at_screen else (100, 100, 100), 2)
+                else:
+                    cv2.putText(frame, "👁️ Gaze: OFF (Always Active)", (20, 40),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+                    cv2.putText(frame, "Show your hand", (20, 70),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+                    
+                cv2.putText(frame, "Press 'g' to toggle gaze detection", (20, 90),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 2)
             
             cv2.imshow('Hand Center Controller', frame)
             
-            if cv2.waitKey(1) & 0xFF == ord('q'):
+            key = cv2.waitKey(1) & 0xFF
+            if key == ord('q'):
                 break
+            elif key == ord('g'):
+                self.toggle_gaze_detection()
         
         # Final cleanup
         if self.is_dragging:
@@ -591,7 +802,8 @@ class HandCenterGestureController:
 
 if __name__ == "__main__":
     try:
-        controller = HandCenterGestureController()
+        # You can start with gaze detection enabled (True) or disabled (False)
+        controller = HandCenterGestureController(enable_gaze_detection=True)
         controller.run()
     except KeyboardInterrupt:
         print("\n🛑 Interrupted by user")
