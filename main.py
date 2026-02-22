@@ -1,3 +1,14 @@
+# ---------- Production mode: suppress warnings before any imports ----------
+import sys
+FROZEN = getattr(sys, 'frozen', False)
+if FROZEN:
+    import os as _os
+    _os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"           # silence TensorFlow
+    _os.environ["MEDIAPIPE_DISABLE_GPU"] = "1"
+    _os.environ["GLOG_minloglevel"] = "3"                # silence glog (MediaPipe)
+    import warnings
+    warnings.filterwarnings("ignore")
+
 import cv2
 import mediapipe as mp
 import numpy as np
@@ -6,18 +17,76 @@ import time
 import math
 import json
 import os
-import sys
 import copy
 import argparse
+import traceback
+import logging
+from datetime import datetime
 from collections import deque
+
+if FROZEN:
+    logging.disable(logging.CRITICAL)  # silence all Python logging
 
 from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
                               QLabel, QPushButton, QLineEdit, QListWidget,
-                              QStackedWidget, QProgressBar, QSizePolicy)
+                              QStackedWidget, QProgressBar, QSizePolicy,
+                              QCheckBox)
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QImage, QPixmap, QFont
 
-PROFILES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "profiles")
+# APP_DIR: when frozen, use the folder containing the exe, not the temp bundle dir
+if FROZEN:
+    APP_DIR = os.path.dirname(sys.executable)
+else:
+    APP_DIR = os.path.dirname(os.path.abspath(__file__))
+PROFILES_DIR = os.path.join(APP_DIR, "profiles")
+CRASH_LOG = os.path.join(APP_DIR, "crash.log")
+
+# ---------- Crash logging ----------
+
+def _write_crash_log(exc_type, exc_value, exc_tb):
+    """Append crash details to crash.log with timestamp."""
+    try:
+        tb_text = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
+        entry = (
+            f"\n{'='*60}\n"
+            f"CRASH  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+            f"{'='*60}\n"
+            f"{tb_text}\n"
+        )
+        with open(CRASH_LOG, "a", encoding="utf-8") as f:
+            f.write(entry)
+    except Exception:
+        pass  # never let logging itself crash
+
+
+def show_crash_dialog(exc_type, exc_value, exc_tb):
+    """Show a user-friendly PyQt5 error dialog and log the crash."""
+    _write_crash_log(exc_type, exc_value, exc_tb)
+    try:
+        from PyQt5.QtWidgets import QApplication, QMessageBox
+        app = QApplication.instance() or QApplication(sys.argv)
+        msg = QMessageBox()
+        msg.setIcon(QMessageBox.Critical)
+        msg.setWindowTitle(S("crash_title"))
+        msg.setText(S("crash_msg"))
+        short = f"{exc_type.__name__}: {exc_value}"
+        if len(short) > 200:
+            short = short[:200] + "..."
+        msg.setInformativeText(short)
+        msg.setDetailedText("".join(traceback.format_exception(exc_type, exc_value, exc_tb)))
+        msg.setStyleSheet("""
+            QMessageBox { background-color: #1e1e23; color: #ddd; }
+            QLabel { color: #ddd; font-size: 13px; }
+            QPushButton { background-color: #2a2a32; color: #ddd; border: 1px solid #444;
+                          border-radius: 6px; padding: 6px 18px; min-width: 80px; }
+            QPushButton:hover { background-color: #3a3a44; }
+            QTextEdit { background-color: #111; color: #ccc; font-family: monospace; font-size: 11px; }
+        """)
+        msg.exec_()
+    except Exception:
+        # If Qt itself is broken, at least print to stderr
+        traceback.print_exception(exc_type, exc_value, exc_tb)
 
 # Single source of truth for all configurable values.
 # Every profile JSON follows this schema; missing keys fall back to these defaults.
@@ -53,6 +122,303 @@ DEFAULT_CONFIG = {
         "open_hand": "cursor_move",
     },
 }
+
+# ---------- Autostart ----------
+
+def set_autostart(enabled):
+    """Enable or disable AirPoint starting when the computer turns on.
+    Windows: creates/removes a shortcut in the Startup folder.
+    macOS: creates/removes a LaunchAgent plist.
+    """
+    launcher = os.path.join(APP_DIR, "launcher.py")
+    if not os.path.exists(launcher):
+        launcher = os.path.join(APP_DIR, "main.py")
+
+    if sys.platform == "win32":
+        try:
+            startup_dir = os.path.join(
+                os.environ.get("APPDATA", ""), "Microsoft", "Windows", "Start Menu",
+                "Programs", "Startup"
+            )
+            bat_path = os.path.join(startup_dir, "AirPoint.bat")
+            if enabled:
+                python = sys.executable
+                with open(bat_path, "w") as f:
+                    f.write(f'@echo off\nstart "" /min "{python}" "{launcher}"\n')
+            else:
+                if os.path.exists(bat_path):
+                    os.remove(bat_path)
+        except Exception as e:
+            _write_crash_log(type(e), e, e.__traceback__)
+
+    elif sys.platform == "darwin":
+        try:
+            plist_dir = os.path.expanduser("~/Library/LaunchAgents")
+            os.makedirs(plist_dir, exist_ok=True)
+            plist_path = os.path.join(plist_dir, "com.chetana.airpoint.plist")
+            if enabled:
+                python = sys.executable
+                plist_content = f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.chetana.airpoint</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>{python}</string>
+        <string>{launcher}</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/tmp/airpoint.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/airpoint.err</string>
+</dict>
+</plist>
+"""
+                with open(plist_path, "w") as f:
+                    f.write(plist_content)
+            else:
+                if os.path.exists(plist_path):
+                    os.remove(plist_path)
+        except Exception as e:
+            _write_crash_log(type(e), e, e.__traceback__)
+
+
+def get_autostart_enabled():
+    """Check whether autostart is currently configured."""
+    if sys.platform == "win32":
+        bat_path = os.path.join(
+            os.environ.get("APPDATA", ""), "Microsoft", "Windows", "Start Menu",
+            "Programs", "Startup", "AirPoint.bat"
+        )
+        return os.path.exists(bat_path)
+    elif sys.platform == "darwin":
+        plist_path = os.path.expanduser("~/Library/LaunchAgents/com.chetana.airpoint.plist")
+        return os.path.exists(plist_path)
+    return False
+
+
+# ---------- Internationalisation (i18n) ----------
+
+STRINGS = {
+    "en": {
+        # Language selector
+        "lang_title": "Choose your language",
+        "lang_subtitle": "You can change this later.",
+        "lang_english": "English",
+        "lang_hindi": "हिन्दी (Hindi)",
+        # Profile selector
+        "profile_title": "Welcome Back",
+        "profile_subtitle": "Choose your profile to get started",
+        "profile_new": "+ New Profile",
+        "profile_select": "Select",
+        "quit": "Quit",
+        # Name entry
+        "name_title": "What's your name?",
+        "name_subtitle": "We'll create a personal profile for you",
+        "name_placeholder": "Type your name here...",
+        "continue": "Continue",
+        # Welcome / How it works
+        "welcome_hi": "Hi, {name}!",
+        "welcome_default": "Hi there!",
+        "welcome_sub": "AirPoint lets you control your computer\nusing just your hand and a camera.",
+        "how_title": "How it works",
+        "feat_move_title": "Move the cursor",
+        "feat_move_desc": "Hold your hand open in front of the camera.\nMove your hand around — the cursor follows.",
+        "feat_click_title": "Click",
+        "feat_click_desc": "Pinch your thumb and the finger next to it\ntogether. Like tapping a button in the air.",
+        "feat_right_title": "Right-click",
+        "feat_right_desc": "Make a fist to right-click.\nThis opens menus, just like a normal mouse.",
+        "feat_scroll_title": "Scroll",
+        "feat_scroll_desc": "Hold up two fingers next to each other and\nmove them up or down to scroll a page.",
+        "setup_note": "First, we need a quick 30-second setup so AirPoint\ncan learn how you move your hand.",
+        "lets_go": "Let's Go!",
+        "skip_setup": "Skip Setup",
+        # Calibration
+        "cal_step1_title": "Step 1 of 4 — We need to know how far you can reach\nso the cursor covers your whole screen.",
+        "cal_step2_title": "Step 2 of 4 — We're checking how steady your hand is\nso we can reduce any shaking.",
+        "cal_step3_title": "Step 3 of 4 — This is how you'll click things\nPinching is like tapping a button in the air.",
+        "cal_step4_title": "Step 4 of 4 — This is how you'll right-click\nMaking a fist opens menus.",
+        "cal_move_left": "Move your hand to the LEFT",
+        "cal_move_right": "Now move your hand to the RIGHT",
+        "cal_move_up": "Move your hand UP",
+        "cal_move_down": "Move your hand DOWN",
+        "cal_hint_dir": "Press the spacebar when your hand is as far {dir} as comfortable",
+        "cal_hint_steady": "Just wait — the camera is watching your hand",
+        "cal_steady_inst": "Hold your hand still and relax",
+        "cal_pinch_inst": "Pinch your thumb and the finger next to it together",
+        "cal_fist_inst": "Make a fist — close all your fingers",
+        "cal_hint_gesture": "Press spacebar to record  or  press N to skip",
+        "cal_hold_still": "Hold still...",
+        "cal_hand_lost": "Hand lost — try again",
+        "cal_show_hand": "Show your hand to begin",
+        "cal_recording": "Recording... hold the gesture",
+        # Done page
+        "done_title": "You're all set!",
+        "done_subtitle": "AirPoint is ready. Here's a quick reminder:",
+        "done_gesture_open": "Open hand",
+        "done_gesture_pinch": "Pinch",
+        "done_gesture_fist": "Fist",
+        "done_gesture_scroll": "Two fingers up or down",
+        "done_action_move": "Move cursor",
+        "done_action_click": "Click",
+        "done_action_right": "Right-click",
+        "done_action_scroll": "Scroll",
+        "done_extras_title": "You can also turn these on later:",
+        "done_extras_gaze": (
+            "<b style='color:#ccc;'>Pause when not looking</b> "
+            "<span style='color:#888;'>— AirPoint pauses if you look away "
+            "from the screen, so it won't move the cursor by accident.</span>"
+        ),
+        "done_extras_dwell": (
+            "<b style='color:#ccc;'>Auto-click</b> "
+            "<span style='color:#888;'>— If you hold your hand still over something "
+            "for a moment, AirPoint clicks it for you automatically.</span>"
+        ),
+        "autostart_label": "Start AirPoint when computer turns on",
+        "start_airpoint": "Start AirPoint",
+        # Status panel
+        "panel_hi": "Hi, {name}",
+        "panel_looking": "Looking for your hand...",
+        "panel_moving": "Moving cursor",
+        "panel_clicked": "Clicked!",
+        "panel_dragging": "Dragging...",
+        "panel_drag_done": "Done dragging",
+        "panel_right_clicked": "Right-clicked!",
+        "panel_scrolling": "Scrolling",
+        "panel_pinch_drag": "Keep pinching to drag...",
+        "panel_auto_clicked": "Auto-clicked!",
+        "panel_look_screen": "Look at screen to start",
+        "panel_ready": "Ready — move your hand",
+        "panel_gaze_on": "  Pause when not looking  —  ON\n  AirPoint pauses if you look away from the screen",
+        "panel_gaze_off": "  Pause when not looking  —  OFF\n  Tap here to turn this on",
+        "panel_dwell_on": "  Auto-click when you hold still  —  ON\n  Clicks for you after staying in one spot",
+        "panel_dwell_off": "  Auto-click when you hold still  —  OFF\n  Tap here to turn this on",
+        "panel_redo": "Redo Setup",
+        "panel_stop": "Stop AirPoint",
+        # Crash
+        "crash_title": "AirPoint — Something went wrong",
+        "crash_msg": "AirPoint ran into an unexpected error and needs to close.\n\nYour profiles and settings are safe.",
+    },
+    "hi": {
+        # Language selector
+        "lang_title": "अपनी भाषा चुनें",
+        "lang_subtitle": "आप इसे बाद में बदल सकते हैं।",
+        "lang_english": "English",
+        "lang_hindi": "हिन्दी (Hindi)",
+        # Profile selector
+        "profile_title": "फिर से स्वागत है",
+        "profile_subtitle": "शुरू करने के लिए अपना प्रोफ़ाइल चुनें",
+        "profile_new": "+ नया प्रोफ़ाइल",
+        "profile_select": "चुनें",
+        "quit": "बंद करें",
+        # Name entry
+        "name_title": "आपका नाम क्या है?",
+        "name_subtitle": "हम आपके लिए एक प्रोफ़ाइल बनाएँगे",
+        "name_placeholder": "यहाँ अपना नाम लिखें...",
+        "continue": "आगे बढ़ें",
+        # Welcome / How it works
+        "welcome_hi": "नमस्ते, {name}!",
+        "welcome_default": "नमस्ते!",
+        "welcome_sub": "AirPoint आपको सिर्फ़ अपने हाथ और\nकैमरे से कंप्यूटर चलाने देता है।",
+        "how_title": "यह कैसे काम करता है",
+        "feat_move_title": "कर्सर हिलाएँ",
+        "feat_move_desc": "कैमरे के सामने हाथ खोलकर रखें।\nहाथ हिलाएँ — कर्सर भी हिलेगा।",
+        "feat_click_title": "क्लिक करें",
+        "feat_click_desc": "अंगूठे और उसके बगल वाली उँगली को\nजोड़ें। हवा में बटन दबाने जैसा है।",
+        "feat_right_title": "राइट-क्लिक",
+        "feat_right_desc": "मुट्ठी बंद करें — राइट-क्लिक होगा।\nइससे मेनू खुलता है।",
+        "feat_scroll_title": "स्क्रॉल करें",
+        "feat_scroll_desc": "दो उँगलियाँ ऊपर उठाएँ और\nऊपर-नीचे हिलाकर पेज स्क्रॉल करें।",
+        "setup_note": "पहले, एक छोटा-सा 30 सेकंड का सेटअप चाहिए\nताकि AirPoint आपके हाथ की गति सीख सके।",
+        "lets_go": "चलो शुरू करें!",
+        "skip_setup": "सेटअप छोड़ें",
+        # Calibration
+        "cal_step1_title": "चरण 1 / 4 — हमें जानना है कि आप कितनी दूर तक पहुँच सकते हैं\nताकि कर्सर पूरी स्क्रीन पर चले।",
+        "cal_step2_title": "चरण 2 / 4 — हम देख रहे हैं कि आपका हाथ कितना स्थिर है\nताकि हम कंपन कम कर सकें।",
+        "cal_step3_title": "चरण 3 / 4 — इससे आप क्लिक करेंगे\nचुटकी बजाना = हवा में बटन दबाना।",
+        "cal_step4_title": "चरण 4 / 4 — इससे आप राइट-क्लिक करेंगे\nमुट्ठी बंद करने से मेनू खुलता है।",
+        "cal_move_left": "अपना हाथ बाईं ओर ले जाएँ",
+        "cal_move_right": "अब दाईं ओर ले जाएँ",
+        "cal_move_up": "अपना हाथ ऊपर ले जाएँ",
+        "cal_move_down": "अपना हाथ नीचे ले जाएँ",
+        "cal_hint_dir": "जब हाथ {dir} तक पहुँच जाए तो स्पेसबार दबाएँ",
+        "cal_hint_steady": "बस रुकें — कैमरा आपका हाथ देख रहा है",
+        "cal_steady_inst": "अपना हाथ स्थिर रखें और आराम करें",
+        "cal_pinch_inst": "अंगूठे और बगल वाली उँगली को जोड़ें",
+        "cal_fist_inst": "मुट्ठी बंद करें — सारी उँगलियाँ बंद",
+        "cal_hint_gesture": "स्पेसबार दबाएँ रिकॉर्ड के लिए  या  N दबाएँ छोड़ने के लिए",
+        "cal_hold_still": "स्थिर रहें...",
+        "cal_hand_lost": "हाथ नहीं दिखा — फिर कोशिश करें",
+        "cal_show_hand": "अपना हाथ दिखाएँ",
+        "cal_recording": "रिकॉर्ड हो रहा है... हाथ ऐसे ही रखें",
+        # Done page
+        "done_title": "सब तैयार है!",
+        "done_subtitle": "AirPoint तैयार है। याद रखें:",
+        "done_gesture_open": "हाथ खोलें",
+        "done_gesture_pinch": "चुटकी",
+        "done_gesture_fist": "मुट्ठी",
+        "done_gesture_scroll": "दो उँगलियाँ ऊपर या नीचे",
+        "done_action_move": "कर्सर हिलाएँ",
+        "done_action_click": "क्लिक",
+        "done_action_right": "राइट-क्लिक",
+        "done_action_scroll": "स्क्रॉल",
+        "done_extras_title": "ये सुविधाएँ बाद में भी चालू कर सकते हैं:",
+        "done_extras_gaze": (
+            "<b style='color:#ccc;'>न देखने पर रुकें</b> "
+            "<span style='color:#888;'>— अगर आप स्क्रीन से नज़र हटाएँ "
+            "तो AirPoint रुक जाएगा, ताकि गलती से कर्सर न हिले।</span>"
+        ),
+        "done_extras_dwell": (
+            "<b style='color:#ccc;'>अपने-आप क्लिक</b> "
+            "<span style='color:#888;'>— अगर आप हाथ को किसी चीज़ पर "
+            "रोककर रखें, तो AirPoint अपने-आप क्लिक कर देगा।</span>"
+        ),
+        "autostart_label": "कंप्यूटर चालू होने पर AirPoint शुरू करें",
+        "start_airpoint": "AirPoint शुरू करें",
+        # Status panel
+        "panel_hi": "नमस्ते, {name}",
+        "panel_looking": "आपका हाथ खोज रहा है...",
+        "panel_moving": "कर्सर हिल रहा है",
+        "panel_clicked": "क्लिक हुआ!",
+        "panel_dragging": "खींच रहा है...",
+        "panel_drag_done": "खींचना पूरा",
+        "panel_right_clicked": "राइट-क्लिक हुआ!",
+        "panel_scrolling": "स्क्रॉल हो रहा है",
+        "panel_pinch_drag": "खींचने के लिए चुटकी पकड़े रखें...",
+        "panel_auto_clicked": "अपने-आप क्लिक हुआ!",
+        "panel_look_screen": "शुरू करने के लिए स्क्रीन देखें",
+        "panel_ready": "तैयार — हाथ हिलाएँ",
+        "panel_gaze_on": "  न देखने पर रुकें  —  चालू\n  स्क्रीन से नज़र हटाने पर AirPoint रुकेगा",
+        "panel_gaze_off": "  न देखने पर रुकें  —  बंद\n  चालू करने के लिए यहाँ दबाएँ",
+        "panel_dwell_on": "  रुकने पर अपने-आप क्लिक  —  चालू\n  एक जगह रुकने पर क्लिक होगा",
+        "panel_dwell_off": "  रुकने पर अपने-आप क्लिक  —  बंद\n  चालू करने के लिए यहाँ दबाएँ",
+        "panel_redo": "फिर से सेटअप करें",
+        "panel_stop": "AirPoint बंद करें",
+        # Crash
+        "crash_title": "AirPoint — कुछ गड़बड़ हो गई",
+        "crash_msg": "AirPoint में कोई समस्या आई और इसे बंद करना पड़ा।\n\nआपकी प्रोफ़ाइल और सेटिंग्स सुरक्षित हैं।",
+    },
+}
+
+# Current language — set during wizard, defaults to English
+_current_lang = "en"
+
+def S(key, **kwargs):
+    """Get a translated string. Usage: S('welcome_hi', name='Kavin')"""
+    text = STRINGS.get(_current_lang, STRINGS["en"]).get(key, STRINGS["en"].get(key, key))
+    if kwargs:
+        text = text.format(**kwargs)
+    return text
+
+def set_language(lang):
+    global _current_lang
+    _current_lang = lang if lang in STRINGS else "en"
+
 
 # ============================================================
 # PyQt5 Setup Wizard (used for profile selection & calibration)
@@ -153,24 +519,120 @@ class SetupWizard(QWidget):
         self.timer.timeout.connect(self._on_timer_tick)
 
         # Build pages
-        self.stacked.addWidget(self._build_profile_page())    # 0
-        self.stacked.addWidget(self._build_name_page())        # 1
-        self.stacked.addWidget(self._build_welcome_page())     # 2
-        self.stacked.addWidget(self._build_calibration_page()) # 3
-        self.stacked.addWidget(self._build_done_page())        # 4
+        self.stacked.addWidget(self._build_language_page())    # 0
+        self.stacked.addWidget(self._build_profile_page())     # 1
+        self.stacked.addWidget(self._build_name_page())        # 2
+        self.stacked.addWidget(self._build_welcome_page())     # 3
+        self.stacked.addWidget(self._build_calibration_page()) # 4
+        self.stacked.addWidget(self._build_done_page())        # 5
 
         # Show correct starting page
         if self.controller.profile_name and self.controller.calibration is None:
             # Profile name given via CLI but not found — go straight to welcome
             self.profile_name = self.controller.profile_name
-            self.welcome_title.setText(f"Hi, {self.profile_name}!")
-            self.stacked.setCurrentIndex(2)
+            self.welcome_title.setText(S("welcome_hi", name=self.profile_name))
+            self.stacked.setCurrentIndex(3)
         elif self.controller.list_profiles():
-            self.stacked.setCurrentIndex(0)
-        else:
+            # Returning user — skip language, go to profile selector
             self.stacked.setCurrentIndex(1)
+        else:
+            # First-time user — start with language choice
+            self.stacked.setCurrentIndex(0)
 
     # ---- Page Builders ----
+
+    def _build_language_page(self):
+        page = QWidget()
+        vbox = QVBoxLayout(page)
+        vbox.setContentsMargins(80, 60, 80, 40)
+        vbox.setSpacing(16)
+
+        vbox.addStretch(1)
+
+        title = QLabel("Choose your language")
+        title.setFont(QFont("Segoe UI", 24, QFont.Bold))
+        title.setAlignment(Qt.AlignCenter)
+        title.setStyleSheet("color: white;")
+        vbox.addWidget(title)
+
+        sub = QLabel("अपनी भाषा चुनें")
+        sub.setFont(QFont("Segoe UI", 16))
+        sub.setAlignment(Qt.AlignCenter)
+        sub.setStyleSheet("color: #aaa;")
+        vbox.addWidget(sub)
+
+        vbox.addSpacing(30)
+
+        en_btn = QPushButton("English")
+        en_btn.setFixedHeight(52)
+        en_btn.setStyleSheet("""
+            QPushButton { font-size: 18px; border-radius: 12px; }
+        """)
+        en_btn.setCursor(Qt.PointingHandCursor)
+        en_btn.clicked.connect(lambda: self._on_language_chosen("en"))
+        vbox.addWidget(en_btn)
+
+        vbox.addSpacing(10)
+
+        hi_btn = QPushButton("हिन्दी (Hindi)")
+        hi_btn.setFixedHeight(52)
+        hi_btn.setStyleSheet("""
+            QPushButton { font-size: 18px; border-radius: 12px; }
+        """)
+        hi_btn.setCursor(Qt.PointingHandCursor)
+        hi_btn.clicked.connect(lambda: self._on_language_chosen("hi"))
+        vbox.addWidget(hi_btn)
+
+        vbox.addStretch(1)
+        return page
+
+    def _on_language_chosen(self, lang):
+        set_language(lang)
+        self._refresh_all_text()
+        if self.controller.list_profiles():
+            self.stacked.setCurrentIndex(1)
+        else:
+            self.stacked.setCurrentIndex(2)
+
+    def _refresh_all_text(self):
+        """Update every translatable widget after language changes."""
+        # Profile page
+        self._prof_title.setText(S("profile_title"))
+        self._prof_sub.setText(S("profile_subtitle"))
+        self._prof_select_btn.setText(S("profile_select"))
+        self._prof_quit_btn.setText(S("quit"))
+        # Update the "+ New Profile" item in the list
+        last_idx = self.profile_list.count() - 1
+        if last_idx >= 0:
+            self.profile_list.item(last_idx).setText(S("profile_new"))
+        # Name page
+        self._name_title.setText(S("name_title"))
+        self._name_sub.setText(S("name_subtitle"))
+        self.name_input.setPlaceholderText(S("name_placeholder"))
+        self._name_continue_btn.setText(S("continue"))
+        # Welcome page
+        if self.profile_name:
+            self.welcome_title.setText(S("welcome_hi", name=self.profile_name))
+        else:
+            self.welcome_title.setText(S("welcome_default"))
+        self._welcome_sub.setText(S("welcome_sub"))
+        self._how_title.setText(S("how_title"))
+        for title_key, t_label, desc_key, d_label in self._feat_labels:
+            t_label.setText(f"<b>{S(title_key)}</b>")
+            d_label.setText(S(desc_key))
+        self._setup_note.setText(S("setup_note"))
+        self._begin_btn.setText(S("lets_go"))
+        self._skip_btn.setText(S("skip_setup"))
+        # Done page
+        self._done_title.setText(S("done_title"))
+        self.done_subtitle.setText(S("done_subtitle"))
+        for g_key, g_label, a_key, a_label in self._done_gesture_labels:
+            g_label.setText(S(g_key))
+            a_label.setText(S(a_key))
+        self._extras_title.setText(S("done_extras_title"))
+        self._extras_desc.setText(S("done_extras_gaze") + "<br>" + S("done_extras_dwell"))
+        self.autostart_cb.setText(S("autostart_label"))
+        self._start_btn.setText(S("start_airpoint"))
 
     def _build_profile_page(self):
         page = QWidget()
@@ -178,39 +640,38 @@ class SetupWizard(QWidget):
         vbox.setContentsMargins(60, 40, 60, 30)
         vbox.setSpacing(12)
 
-        title = QLabel("Welcome Back")
-        title.setFont(QFont("Segoe UI", 24, QFont.Bold))
-        title.setAlignment(Qt.AlignCenter)
-        title.setStyleSheet("color: white;")
-        vbox.addWidget(title)
+        self._prof_title = QLabel(S("profile_title"))
+        self._prof_title.setFont(QFont("Segoe UI", 24, QFont.Bold))
+        self._prof_title.setAlignment(Qt.AlignCenter)
+        self._prof_title.setStyleSheet("color: white;")
+        vbox.addWidget(self._prof_title)
 
-        sub = QLabel("Choose your profile to get started")
-        sub.setFont(QFont("Segoe UI", 12))
-        sub.setAlignment(Qt.AlignCenter)
-        sub.setStyleSheet("color: #999;")
-        vbox.addWidget(sub)
+        self._prof_sub = QLabel(S("profile_subtitle"))
+        self._prof_sub.setFont(QFont("Segoe UI", 12))
+        self._prof_sub.setAlignment(Qt.AlignCenter)
+        self._prof_sub.setStyleSheet("color: #999;")
+        vbox.addWidget(self._prof_sub)
 
         vbox.addSpacing(10)
 
         self.profile_list = QListWidget()
         for name in self.controller.list_profiles():
             self.profile_list.addItem(name)
-        new_item = "+ New Profile"
-        self.profile_list.addItem(new_item)
+        self.profile_list.addItem(S("profile_new"))
         self.profile_list.setCurrentRow(0)
         self.profile_list.itemDoubleClicked.connect(self._on_profile_select)
         vbox.addWidget(self.profile_list, 1)
 
         btn_row = QHBoxLayout()
         btn_row.setSpacing(12)
-        select_btn = QPushButton("Select")
-        select_btn.clicked.connect(self._on_profile_select)
-        btn_row.addWidget(select_btn)
+        self._prof_select_btn = QPushButton(S("profile_select"))
+        self._prof_select_btn.clicked.connect(self._on_profile_select)
+        btn_row.addWidget(self._prof_select_btn)
 
-        quit_btn = QPushButton("Quit")
-        quit_btn.setObjectName("secondary")
-        quit_btn.clicked.connect(lambda: self._finish("quit"))
-        btn_row.addWidget(quit_btn)
+        self._prof_quit_btn = QPushButton(S("quit"))
+        self._prof_quit_btn.setObjectName("secondary")
+        self._prof_quit_btn.clicked.connect(lambda: self._finish("quit"))
+        btn_row.addWidget(self._prof_quit_btn)
         vbox.addLayout(btn_row)
 
         return page
@@ -223,22 +684,22 @@ class SetupWizard(QWidget):
 
         vbox.addStretch(1)
 
-        title = QLabel("What's your name?")
-        title.setFont(QFont("Segoe UI", 22, QFont.Bold))
-        title.setAlignment(Qt.AlignCenter)
-        title.setStyleSheet("color: white;")
-        vbox.addWidget(title)
+        self._name_title = QLabel(S("name_title"))
+        self._name_title.setFont(QFont("Segoe UI", 22, QFont.Bold))
+        self._name_title.setAlignment(Qt.AlignCenter)
+        self._name_title.setStyleSheet("color: white;")
+        vbox.addWidget(self._name_title)
 
-        sub = QLabel("We'll create a personal profile for you")
-        sub.setFont(QFont("Segoe UI", 11))
-        sub.setAlignment(Qt.AlignCenter)
-        sub.setStyleSheet("color: #888;")
-        vbox.addWidget(sub)
+        self._name_sub = QLabel(S("name_subtitle"))
+        self._name_sub.setFont(QFont("Segoe UI", 11))
+        self._name_sub.setAlignment(Qt.AlignCenter)
+        self._name_sub.setStyleSheet("color: #888;")
+        vbox.addWidget(self._name_sub)
 
         vbox.addSpacing(10)
 
         self.name_input = QLineEdit()
-        self.name_input.setPlaceholderText("e.g. Kavin, Priya, User1...")
+        self.name_input.setPlaceholderText(S("name_placeholder"))
         self.name_input.setMaxLength(20)
         self.name_input.setAlignment(Qt.AlignCenter)
         self.name_input.setFixedHeight(48)
@@ -249,10 +710,10 @@ class SetupWizard(QWidget):
 
         btn_row = QHBoxLayout()
         btn_row.setSpacing(12)
-        continue_btn = QPushButton("Continue")
-        continue_btn.clicked.connect(self._on_name_entered)
+        self._name_continue_btn = QPushButton(S("continue"))
+        self._name_continue_btn.clicked.connect(self._on_name_entered)
         btn_row.addStretch()
-        btn_row.addWidget(continue_btn)
+        btn_row.addWidget(self._name_continue_btn)
         btn_row.addStretch()
         vbox.addLayout(btn_row)
 
@@ -262,47 +723,83 @@ class SetupWizard(QWidget):
     def _build_welcome_page(self):
         page = QWidget()
         vbox = QVBoxLayout(page)
-        vbox.setContentsMargins(60, 40, 60, 30)
-        vbox.setSpacing(12)
+        vbox.setContentsMargins(40, 24, 40, 20)
+        vbox.setSpacing(6)
 
-        vbox.addStretch(1)
-
-        self.welcome_title = QLabel("Hi there!")
-        self.welcome_title.setFont(QFont("Segoe UI", 26, QFont.Bold))
+        self.welcome_title = QLabel(S("welcome_default"))
+        self.welcome_title.setFont(QFont("Segoe UI", 24, QFont.Bold))
         self.welcome_title.setAlignment(Qt.AlignCenter)
         self.welcome_title.setStyleSheet("color: white;")
         vbox.addWidget(self.welcome_title)
 
-        sub = QLabel("Let's set up AirPoint for you.")
-        sub.setFont(QFont("Segoe UI", 13))
-        sub.setAlignment(Qt.AlignCenter)
-        sub.setStyleSheet("color: #aaa;")
-        vbox.addWidget(sub)
+        self._welcome_sub = QLabel(S("welcome_sub"))
+        self._welcome_sub.setFont(QFont("Segoe UI", 12))
+        self._welcome_sub.setAlignment(Qt.AlignCenter)
+        self._welcome_sub.setStyleSheet("color: #aaa;")
+        self._welcome_sub.setWordWrap(True)
+        vbox.addWidget(self._welcome_sub)
 
-        desc = QLabel("This quick setup takes about 30 seconds.\nWe'll calibrate the cursor to your hand movements.")
-        desc.setFont(QFont("Segoe UI", 11))
-        desc.setAlignment(Qt.AlignCenter)
-        desc.setStyleSheet("color: #777;")
-        desc.setWordWrap(True)
-        vbox.addWidget(desc)
+        vbox.addSpacing(10)
 
-        vbox.addSpacing(20)
+        self._how_title = QLabel(S("how_title"))
+        self._how_title.setFont(QFont("Segoe UI", 14, QFont.Bold))
+        self._how_title.setStyleSheet("color: #00dcc8;")
+        vbox.addWidget(self._how_title)
+
+        vbox.addSpacing(4)
+
+        # Feature rows — store labels for translation refresh
+        self._feat_labels = []
+        feat_keys = [
+            ("feat_move_title", "feat_move_desc"),
+            ("feat_click_title", "feat_click_desc"),
+            ("feat_right_title", "feat_right_desc"),
+            ("feat_scroll_title", "feat_scroll_desc"),
+        ]
+        for title_key, desc_key in feat_keys:
+            row = QHBoxLayout()
+            row.setSpacing(10)
+            row.setContentsMargins(0, 0, 0, 0)
+            t = QLabel(f"<b>{S(title_key)}</b>")
+            t.setFont(QFont("Segoe UI", 11))
+            t.setStyleSheet("color: #ddd;")
+            t.setFixedWidth(120)
+            t.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+            row.addWidget(t)
+            d = QLabel(S(desc_key))
+            d.setFont(QFont("Segoe UI", 10))
+            d.setStyleSheet("color: #999;")
+            d.setWordWrap(True)
+            row.addWidget(d, 1)
+            self._feat_labels.append((title_key, t, desc_key, d))
+            vbox.addLayout(row)
+            vbox.addSpacing(2)
+
+        vbox.addSpacing(6)
+
+        self._setup_note = QLabel(S("setup_note"))
+        self._setup_note.setFont(QFont("Segoe UI", 11))
+        self._setup_note.setAlignment(Qt.AlignCenter)
+        self._setup_note.setStyleSheet("color: #aaa;")
+        self._setup_note.setWordWrap(True)
+        vbox.addWidget(self._setup_note)
+
+        vbox.addSpacing(10)
 
         btn_row = QHBoxLayout()
         btn_row.setSpacing(12)
-        begin_btn = QPushButton("Begin Setup")
-        begin_btn.clicked.connect(self._start_calibration)
+        self._begin_btn = QPushButton(S("lets_go"))
+        self._begin_btn.clicked.connect(self._start_calibration)
         btn_row.addStretch()
-        btn_row.addWidget(begin_btn)
+        btn_row.addWidget(self._begin_btn)
 
-        skip_btn = QPushButton("Skip")
-        skip_btn.setObjectName("secondary")
-        skip_btn.clicked.connect(lambda: self._finish("skipped"))
-        btn_row.addWidget(skip_btn)
+        self._skip_btn = QPushButton(S("skip_setup"))
+        self._skip_btn.setObjectName("secondary")
+        self._skip_btn.clicked.connect(lambda: self._finish("skipped"))
+        btn_row.addWidget(self._skip_btn)
         btn_row.addStretch()
         vbox.addLayout(btn_row)
 
-        vbox.addStretch(1)
         return page
 
     def _build_calibration_page(self):
@@ -326,13 +823,14 @@ class SetupWizard(QWidget):
         vbox.addLayout(dots_row)
 
         # Title and instruction
-        self.cal_title = QLabel("Step 1 of 4: Movement Range")
-        self.cal_title.setFont(QFont("Segoe UI", 13))
+        self.cal_title = QLabel(S("cal_step1_title"))
+        self.cal_title.setFont(QFont("Segoe UI", 11))
         self.cal_title.setAlignment(Qt.AlignCenter)
         self.cal_title.setStyleSheet("color: #999;")
+        self.cal_title.setWordWrap(True)
         vbox.addWidget(self.cal_title)
 
-        self.cal_instruction = QLabel("Reach as far LEFT as comfortable")
+        self.cal_instruction = QLabel(S("cal_move_left"))
         self.cal_instruction.setFont(QFont("Segoe UI", 20, QFont.Bold))
         self.cal_instruction.setAlignment(Qt.AlignCenter)
         self.cal_instruction.setStyleSheet("color: #00dcc8;")
@@ -347,10 +845,10 @@ class SetupWizard(QWidget):
         vbox.addLayout(cam_row)
 
         # Hint
-        self.cal_hint = QLabel("Press SPACE when your hand is at your LEFT limit")
-        self.cal_hint.setFont(QFont("Segoe UI", 13))
+        self.cal_hint = QLabel(S("cal_hint_dir", dir="LEFT"))
+        self.cal_hint.setFont(QFont("Segoe UI", 16, QFont.Bold))
         self.cal_hint.setAlignment(Qt.AlignCenter)
-        self.cal_hint.setStyleSheet("color: #aaa;")
+        self.cal_hint.setStyleSheet("color: #00dcc8;")
         vbox.addWidget(self.cal_hint)
 
         # Progress bar (hidden by default)
@@ -366,10 +864,8 @@ class SetupWizard(QWidget):
     def _build_done_page(self):
         page = QWidget()
         vbox = QVBoxLayout(page)
-        vbox.setContentsMargins(60, 40, 60, 30)
-        vbox.setSpacing(12)
-
-        vbox.addStretch(1)
+        vbox.setContentsMargins(40, 24, 40, 20)
+        vbox.setSpacing(8)
 
         # Completed dots
         dots_row = QHBoxLayout()
@@ -383,32 +879,94 @@ class SetupWizard(QWidget):
         dots_row.addStretch()
         vbox.addLayout(dots_row)
 
-        vbox.addSpacing(10)
+        vbox.addSpacing(6)
 
-        title = QLabel("You're all set!")
-        title.setFont(QFont("Segoe UI", 26, QFont.Bold))
-        title.setAlignment(Qt.AlignCenter)
-        title.setStyleSheet("color: #00e8a0;")
-        vbox.addWidget(title)
+        self._done_title = QLabel(S("done_title"))
+        self._done_title.setFont(QFont("Segoe UI", 24, QFont.Bold))
+        self._done_title.setAlignment(Qt.AlignCenter)
+        self._done_title.setStyleSheet("color: #00e8a0;")
+        vbox.addWidget(self._done_title)
 
-        self.done_subtitle = QLabel("Your profile is ready to use.")
-        self.done_subtitle.setFont(QFont("Segoe UI", 12))
+        self.done_subtitle = QLabel(S("done_subtitle"))
+        self.done_subtitle.setFont(QFont("Segoe UI", 11))
         self.done_subtitle.setAlignment(Qt.AlignCenter)
         self.done_subtitle.setStyleSheet("color: #999;")
         vbox.addWidget(self.done_subtitle)
 
-        vbox.addSpacing(20)
+        vbox.addSpacing(8)
+
+        # Quick reference card
+        card = QWidget()
+        card.setStyleSheet("background-color: #252530; border-radius: 10px; padding: 12px;")
+        card_vbox = QVBoxLayout(card)
+        card_vbox.setContentsMargins(14, 10, 14, 10)
+        card_vbox.setSpacing(6)
+
+        gesture_keys = [
+            ("done_gesture_open", "done_action_move"),
+            ("done_gesture_pinch", "done_action_click"),
+            ("done_gesture_fist", "done_action_right"),
+            ("done_gesture_scroll", "done_action_scroll"),
+        ]
+        self._done_gesture_labels = []
+        for g_key, a_key in gesture_keys:
+            row = QHBoxLayout()
+            g = QLabel(S(g_key))
+            g.setFont(QFont("Segoe UI", 11))
+            g.setStyleSheet("color: #bbb;")
+            row.addWidget(g)
+            row.addStretch()
+            a = QLabel(S(a_key))
+            a.setFont(QFont("Segoe UI", 11, QFont.Bold))
+            a.setStyleSheet("color: #00dcc8;")
+            a.setAlignment(Qt.AlignRight)
+            row.addWidget(a)
+            self._done_gesture_labels.append((g_key, g, a_key, a))
+            card_vbox.addLayout(row)
+
+        vbox.addWidget(card)
+
+        vbox.addSpacing(6)
+
+        self._extras_title = QLabel(S("done_extras_title"))
+        self._extras_title.setFont(QFont("Segoe UI", 11))
+        self._extras_title.setStyleSheet("color: #999;")
+        vbox.addWidget(self._extras_title)
+
+        self._extras_desc = QLabel(S("done_extras_gaze") + "<br>" + S("done_extras_dwell"))
+        self._extras_desc.setFont(QFont("Segoe UI", 10))
+        self._extras_desc.setWordWrap(True)
+        self._extras_desc.setStyleSheet("color: #888;")
+        vbox.addWidget(self._extras_desc)
+
+        vbox.addSpacing(8)
+
+        self.autostart_cb = QCheckBox(S("autostart_label"))
+        self.autostart_cb.setFont(QFont("Segoe UI", 11))
+        self.autostart_cb.setStyleSheet("""
+            QCheckBox { color: #bbb; spacing: 8px; }
+            QCheckBox::indicator { width: 18px; height: 18px; border-radius: 4px;
+                                   border: 2px solid #555; background: #2a2a32; }
+            QCheckBox::indicator:checked { background: #00dcc8; border-color: #00dcc8; }
+        """)
+        self.autostart_cb.setChecked(get_autostart_enabled())
+        cb_row = QHBoxLayout()
+        cb_row.addStretch()
+        cb_row.addWidget(self.autostart_cb)
+        cb_row.addStretch()
+        vbox.addLayout(cb_row)
+
+        vbox.addSpacing(10)
 
         btn_row = QHBoxLayout()
         btn_row.setSpacing(12)
-        start_btn = QPushButton("Start AirPoint")
-        start_btn.clicked.connect(lambda: self._finish("completed"))
+        self._start_btn = QPushButton(S("start_airpoint"))
+        self._start_btn.clicked.connect(lambda: self._finish("completed"))
         btn_row.addStretch()
-        btn_row.addWidget(start_btn)
+        btn_row.addWidget(self._start_btn)
         btn_row.addStretch()
         vbox.addLayout(btn_row)
 
-        vbox.addStretch(1)
         return page
 
     # ---- Page Actions ----
@@ -418,8 +976,8 @@ class SetupWizard(QWidget):
         if item is None:
             return
         text = item.text()
-        if text == "+ New Profile":
-            self.stacked.setCurrentIndex(1)
+        if text == S("profile_new"):
+            self.stacked.setCurrentIndex(2)
             self.name_input.setFocus()
         else:
             self.profile_name = text
@@ -431,8 +989,8 @@ class SetupWizard(QWidget):
         name = "".join(c for c in raw if c.isalnum() or c in " _-").strip() or "default"
         self.profile_name = name
         self.controller.profile_name = name
-        self.welcome_title.setText(f"Hi, {name}!")
-        self.stacked.setCurrentIndex(2)
+        self.welcome_title.setText(S("welcome_hi", name=name))
+        self.stacked.setCurrentIndex(3)
 
     def _start_calibration(self):
         self.cal_step = 0
@@ -443,7 +1001,7 @@ class SetupWizard(QWidget):
         self.tremor_samples = []
         self.gesture_results = {}
         self._update_cal_display()
-        self.stacked.setCurrentIndex(3)
+        self.stacked.setCurrentIndex(4)
         self.timer.start()
 
     def _update_cal_display(self):
@@ -463,32 +1021,39 @@ class SetupWizard(QWidget):
 
         if self.cal_step == 0:
             d = DIRECTIONS[self.dir_index] if self.dir_index < 4 else "DOWN"
-            self.cal_title.setText(f"Step 1 of 4: Movement Range")
-            inst_map = {"LEFT": "Reach as far LEFT as comfortable",
-                        "RIGHT": "Now reach to the RIGHT",
-                        "UP": "Reach UP",
-                        "DOWN": "And reach DOWN"}
+            self.cal_title.setText(S("cal_step1_title"))
+            inst_map = {
+                "LEFT": S("cal_move_left"),
+                "RIGHT": S("cal_move_right"),
+                "UP": S("cal_move_up"),
+                "DOWN": S("cal_move_down"),
+            }
             self.cal_instruction.setText(inst_map.get(d, ""))
-            self.cal_hint.setText(f"Press SPACE when your hand is at your {d} limit")
+            # For Hindi, direction names stay in the hint via {dir}
+            dir_display = {"LEFT": "LEFT", "RIGHT": "RIGHT", "UP": "UP", "DOWN": "DOWN"}
+            if _current_lang == "hi":
+                dir_display = {"LEFT": "बाईं ओर", "RIGHT": "दाईं ओर",
+                               "UP": "ऊपर", "DOWN": "नीचे"}
+            self.cal_hint.setText(S("cal_hint_dir", dir=dir_display.get(d, d)))
             self.cal_progress.setVisible(False)
         elif self.cal_step == 1:
-            self.cal_title.setText("Step 2 of 4: Steadiness Check")
-            self.cal_instruction.setText("Hold your hand still and relax")
-            self.cal_hint.setText("This is automatic — just hold still")
+            self.cal_title.setText(S("cal_step2_title"))
+            self.cal_instruction.setText(S("cal_steady_inst"))
+            self.cal_hint.setText(S("cal_hint_steady"))
             self.cal_progress.setVisible(True)
             self.cal_progress.setValue(0)
         elif self.cal_step == 2:
-            self.cal_title.setText("Step 3 of 4: Pinch Gesture")
-            self.cal_instruction.setText("Pinch your thumb and index finger together")
-            self.cal_hint.setText("Press SPACE to record  |  N to skip")
+            self.cal_title.setText(S("cal_step3_title"))
+            self.cal_instruction.setText(S("cal_pinch_inst"))
+            self.cal_hint.setText(S("cal_hint_gesture"))
             self.cal_progress.setVisible(False)
             self.gesture_sampling = False
             self.gesture_samples = []
             self.gesture_skipped = False
         elif self.cal_step == 3:
-            self.cal_title.setText("Step 4 of 4: Fist Gesture")
-            self.cal_instruction.setText("Make a fist — close all your fingers")
-            self.cal_hint.setText("Press SPACE to record  |  N to skip")
+            self.cal_title.setText(S("cal_step4_title"))
+            self.cal_instruction.setText(S("cal_fist_inst"))
+            self.cal_hint.setText(S("cal_hint_gesture"))
             self.cal_progress.setVisible(False)
             self.gesture_sampling = False
             self.gesture_samples = []
@@ -554,7 +1119,7 @@ class SetupWizard(QWidget):
 
         if self._space and self.capture_countdown is None and hand_center is not None:
             self.capture_countdown = time.time()
-            self.cal_hint.setText("Hold still...")
+            self.cal_hint.setText(S("cal_hold_still"))
             self.cal_hint.setStyleSheet("color: #00dcc8; font-weight: bold;")
 
         if self.capture_countdown is not None:
@@ -566,12 +1131,12 @@ class SetupWizard(QWidget):
                     print(f"  Captured {label}: ({hand_center[0]:.4f}, {hand_center[1]:.4f})")
                     self.dir_index += 1
                     self.capture_countdown = None
-                    self.cal_hint.setStyleSheet("color: #777;")
+                    self.cal_hint.setStyleSheet("color: #00dcc8; font-weight: bold;")
                     self._update_cal_display()
                 else:
                     self.capture_countdown = None
-                    self.cal_hint.setText("Hand lost — try again")
-                    self.cal_hint.setStyleSheet("color: #ff6666;")
+                    self.cal_hint.setText(S("cal_hand_lost"))
+                    self.cal_hint.setStyleSheet("color: #ff6666; font-weight: bold;")
 
     def _tick_steadiness(self, hand_center):
         TREMOR_DURATION = 5.0
@@ -593,8 +1158,8 @@ class SetupWizard(QWidget):
                 self.tremor_start = None
                 self.tremor_samples.clear()
                 self.cal_progress.setValue(0)
-            self.cal_hint.setText("Show your hand to begin")
-            self.cal_hint.setStyleSheet("color: #ff6666;")
+            self.cal_hint.setText(S("cal_show_hand"))
+            self.cal_hint.setStyleSheet("color: #ff6666; font-weight: bold;")
 
     def _finish_steadiness(self):
         if len(self.tremor_samples) >= 10:
@@ -646,7 +1211,7 @@ class SetupWizard(QWidget):
             self.gesture_samples = []
             self.cal_progress.setVisible(True)
             self.cal_progress.setValue(0)
-            self.cal_hint.setText("Recording... hold the gesture")
+            self.cal_hint.setText(S("cal_recording"))
             self.cal_hint.setStyleSheet("color: #00dcc8; font-weight: bold;")
 
         if self.gesture_sampling and self.gesture_sample_start is not None:
@@ -669,7 +1234,7 @@ class SetupWizard(QWidget):
 
     def _advance_from_gesture(self, gesture_name):
         self.cal_progress.setVisible(False)
-        self.cal_hint.setStyleSheet("color: #777;")
+        self.cal_hint.setStyleSheet("color: #00dcc8; font-weight: bold;")
         if gesture_name == "PINCH":
             self.cal_step = 3
             self._update_cal_display()
@@ -716,14 +1281,17 @@ class SetupWizard(QWidget):
         self.controller.save_profile()
         print(f"Calibration complete for '{self.profile_name}'!")
 
-        self.done_subtitle.setText(f"Profile '{self.profile_name}' is ready to use.")
-        self.stacked.setCurrentIndex(4)
+        self.done_subtitle.setText(S("done_subtitle"))
+        self.stacked.setCurrentIndex(5)
 
     # ---- Finish / Close ----
 
     def _finish(self, result):
         self.timer.stop()
         self.result = result
+        # Apply autostart preference
+        if result == "completed" and hasattr(self, 'autostart_cb'):
+            set_autostart(self.autostart_cb.isChecked())
         self.close()
 
     def keyPressEvent(self, event):
@@ -745,112 +1313,110 @@ class SetupWizard(QWidget):
 
 
 class StatusPanel(QWidget):
-    """Clean status dashboard shown during tracking (replaces raw cv2 debug window)."""
+    """User-friendly control panel shown during tracking."""
+
+    TOGGLE_ON = """
+        QPushButton { background-color: #1a3d38; color: #00e8a0; border: 2px solid #00dcc8;
+                      border-radius: 12px; padding: 12px; text-align: left; font-size: 14px; }
+        QPushButton:hover { background-color: #1f4a43; }
+    """
+    TOGGLE_OFF = """
+        QPushButton { background-color: #2a2a32; color: #888; border: 2px solid #3a3a44;
+                      border-radius: 12px; padding: 12px; text-align: left; font-size: 14px; }
+        QPushButton:hover { background-color: #333340; }
+    """
 
     def __init__(self, controller):
         super().__init__()
         self.controller = controller
         self.setWindowTitle("AirPoint")
-        self.setFixedSize(340, 420)
-        self.setStyleSheet(DARK_STYLE + """
-            StatusPanel { background-color: #1e1e23; }
-        """)
+        self.setFixedSize(360, 520)
+        self.setStyleSheet(DARK_STYLE + " StatusPanel { background-color: #1e1e23; }")
         self.setWindowFlags(Qt.WindowStaysOnTopHint | Qt.Tool)
 
         vbox = QVBoxLayout(self)
-        vbox.setContentsMargins(20, 20, 20, 16)
-        vbox.setSpacing(10)
+        vbox.setContentsMargins(24, 20, 24, 18)
+        vbox.setSpacing(0)
 
-        # Header
+        # ---- Header + status badge ----
         header = QLabel("AirPoint")
-        header.setFont(QFont("Segoe UI", 18, QFont.Bold))
+        header.setFont(QFont("Segoe UI", 20, QFont.Bold))
         header.setAlignment(Qt.AlignCenter)
         header.setStyleSheet("color: #00dcc8;")
         vbox.addWidget(header)
 
-        # Profile name
         self.profile_label = QLabel()
-        self.profile_label.setFont(QFont("Segoe UI", 12))
+        self.profile_label.setFont(QFont("Segoe UI", 11))
         self.profile_label.setAlignment(Qt.AlignCenter)
-        self.profile_label.setStyleSheet("color: #999;")
+        self.profile_label.setStyleSheet("color: #888;")
         vbox.addWidget(self.profile_label)
 
-        # Divider
-        div = QLabel()
-        div.setFixedHeight(1)
-        div.setStyleSheet("background-color: #333;")
-        vbox.addWidget(div)
+        vbox.addSpacing(10)
 
-        vbox.addSpacing(4)
+        # Big status indicator
+        self.status_badge = QLabel(S("panel_looking"))
+        self.status_badge.setFont(QFont("Segoe UI", 15, QFont.Bold))
+        self.status_badge.setAlignment(Qt.AlignCenter)
+        self.status_badge.setFixedHeight(50)
+        self.status_badge.setStyleSheet("""
+            background-color: #2a2a32; color: #888; border-radius: 12px; padding: 8px;
+        """)
+        vbox.addWidget(self.status_badge)
 
-        # Status rows
-        self.gesture_label = self._make_row("Gesture", "Waiting...")
-        vbox.addLayout(self.gesture_label["layout"])
+        vbox.addSpacing(14)
 
-        self.gaze_label = self._make_row("Gaze Lock", "OFF")
-        vbox.addLayout(self.gaze_label["layout"])
+        # ---- Toggle buttons ----
+        self.gaze_btn = QPushButton()
+        self.gaze_btn.setCursor(Qt.PointingHandCursor)
+        self.gaze_btn.setFixedHeight(52)
+        self.gaze_btn.clicked.connect(self._toggle_gaze)
+        vbox.addWidget(self.gaze_btn)
 
-        self.dwell_label = self._make_row("Dwell Click", "OFF")
-        vbox.addLayout(self.dwell_label["layout"])
+        vbox.addSpacing(8)
 
-        self.smoothing_label = self._make_row("Smoothing", "0.65")
-        vbox.addLayout(self.smoothing_label["layout"])
-
-        self.hand_label = self._make_row("Hand", "Not detected")
-        vbox.addLayout(self.hand_label["layout"])
+        self.dwell_btn = QPushButton()
+        self.dwell_btn.setCursor(Qt.PointingHandCursor)
+        self.dwell_btn.setFixedHeight(52)
+        self.dwell_btn.clicked.connect(self._toggle_dwell)
+        vbox.addWidget(self.dwell_btn)
 
         vbox.addStretch(1)
 
-        # Divider
-        div2 = QLabel()
-        div2.setFixedHeight(1)
-        div2.setStyleSheet("background-color: #333;")
-        vbox.addWidget(div2)
-
-        # Keyboard shortcuts hint
-        hints = QLabel("C = recalibrate    G = gaze toggle\nD = dwell toggle    Q = quit")
-        hints.setFont(QFont("Segoe UI", 9))
-        hints.setAlignment(Qt.AlignCenter)
-        hints.setStyleSheet("color: #555;")
-        vbox.addWidget(hints)
-
-        # Quit / Recalibrate buttons
-        btn_row = QHBoxLayout()
-        btn_row.setSpacing(8)
-        self.recal_btn = QPushButton("Recalibrate")
-        self.recal_btn.setObjectName("secondary")
-        self.recal_btn.setFixedHeight(34)
-        btn_row.addWidget(self.recal_btn)
-
-        self.quit_btn = QPushButton("Quit")
-        self.quit_btn.setObjectName("secondary")
-        self.quit_btn.setFixedHeight(34)
-        self.quit_btn.setStyleSheet("""
-            QPushButton { background-color: #442222; color: #ff6666; border: 1px solid #663333; border-radius: 8px; }
-            QPushButton:hover { background-color: #553333; }
+        # ---- Bottom actions ----
+        self.recal_btn = QPushButton(S("panel_redo"))
+        self.recal_btn.setCursor(Qt.PointingHandCursor)
+        self.recal_btn.setFixedHeight(44)
+        self.recal_btn.setStyleSheet("""
+            QPushButton { background-color: #2a2a32; color: #ccc; border: 2px solid #3a3a44;
+                          border-radius: 12px; font-size: 15px; }
+            QPushButton:hover { background-color: #333340; }
         """)
-        btn_row.addWidget(self.quit_btn)
-        vbox.addLayout(btn_row)
+        vbox.addWidget(self.recal_btn)
+
+        vbox.addSpacing(8)
+
+        self.quit_btn = QPushButton(S("panel_stop"))
+        self.quit_btn.setCursor(Qt.PointingHandCursor)
+        self.quit_btn.setFixedHeight(44)
+        self.quit_btn.setStyleSheet("""
+            QPushButton { background-color: #3a2020; color: #ff7777; border: 2px solid #552a2a;
+                          border-radius: 12px; font-size: 15px; }
+            QPushButton:hover { background-color: #4a2a2a; }
+        """)
+        vbox.addWidget(self.quit_btn)
 
         # Timer for updating status
         self.timer = QTimer()
         self.timer.setInterval(200)
         self.timer.timeout.connect(self._update_status)
 
-    def _make_row(self, label_text, value_text):
-        row = QHBoxLayout()
-        row.setSpacing(8)
-        label = QLabel(label_text)
-        label.setFont(QFont("Segoe UI", 11))
-        label.setStyleSheet("color: #777;")
-        row.addWidget(label)
-        row.addStretch()
-        value = QLabel(value_text)
-        value.setFont(QFont("Segoe UI", 11, QFont.Bold))
-        value.setStyleSheet("color: #ddd;")
-        value.setAlignment(Qt.AlignRight)
-        row.addWidget(value)
-        return {"layout": row, "value": value}
+    def _toggle_gaze(self):
+        self.controller.toggle_gaze_detection()
+        self._update_status()
+
+    def _toggle_dwell(self):
+        self.controller.toggle_dwell_click()
+        self._update_status()
 
     def start(self):
         self._update_status()
@@ -858,71 +1424,65 @@ class StatusPanel(QWidget):
 
     def _update_status(self):
         c = self.controller
-        self.profile_label.setText(f"Profile: {c.profile_name or 'None'}")
-        self.smoothing_label["value"].setText(f"{c.smoothing_factor:.2f}")
+        self.profile_label.setText(S("panel_hi", name=c.profile_name or "User"))
 
-        # Gaze
-        if c.gaze_detection_enabled:
-            looking = getattr(c, 'looking_at_screen', False)
-            self.gaze_label["value"].setText("ACTIVE" if looking else "WATCHING")
-            self.gaze_label["value"].setStyleSheet(
-                "color: #00e8a0; font-weight: bold;" if looking else "color: #ffaa00; font-weight: bold;")
-        else:
-            self.gaze_label["value"].setText("OFF")
-            self.gaze_label["value"].setStyleSheet("color: #777; font-weight: bold;")
-
-        # Dwell
-        if c.dwell_click_enabled:
-            self.dwell_label["value"].setText(f"ON ({c.dwell_click_duration:.1f}s)")
-            self.dwell_label["value"].setStyleSheet("color: #00e8a0; font-weight: bold;")
-        else:
-            self.dwell_label["value"].setText("OFF")
-            self.dwell_label["value"].setStyleSheet("color: #777; font-weight: bold;")
-
-        # Hand / Gesture
+        # -- Status badge --
         gesture = getattr(c, '_last_gesture', 'no_hand')
         if gesture == 'no_hand':
-            self.hand_label["value"].setText("Not detected")
-            self.hand_label["value"].setStyleSheet("color: #666; font-weight: bold;")
-            self.gesture_label["value"].setText("--")
-            self.gesture_label["value"].setStyleSheet("color: #666; font-weight: bold;")
+            self.status_badge.setText(S("panel_looking"))
+            self.status_badge.setStyleSheet(
+                "background-color: #2a2a32; color: #888; border-radius: 12px; padding: 8px;")
         else:
-            self.hand_label["value"].setText("Tracking")
-            self.hand_label["value"].setStyleSheet("color: #00e8a0; font-weight: bold;")
             friendly = {
-                "cursor_control": "Moving cursor",
-                "left_click": "Click!",
-                "drag_start": "Dragging...",
-                "dragging": "Dragging...",
-                "drag_end": "Drag ended",
-                "right_click": "Right click!",
-                "two_finger_scroll": "Scrolling",
-                "scroll_active": "Scrolling",
-                "pinch_wait": "Pinch hold...",
-                "dwell_click": "Dwell click!",
-                "safety_disabled": "Paused (look at screen)",
-                "idle": "Ready",
-            }.get(gesture, gesture)
-            self.gesture_label["value"].setText(friendly)
-            color = "#00dcc8"
+                "cursor_control": S("panel_moving"),
+                "left_click": S("panel_clicked"),
+                "drag_start": S("panel_dragging"),
+                "dragging": S("panel_dragging"),
+                "drag_end": S("panel_drag_done"),
+                "right_click": S("panel_right_clicked"),
+                "two_finger_scroll": S("panel_scrolling"),
+                "scroll_active": S("panel_scrolling"),
+                "pinch_wait": S("panel_pinch_drag"),
+                "dwell_click": S("panel_auto_clicked"),
+                "safety_disabled": S("panel_look_screen"),
+                "idle": S("panel_ready"),
+            }.get(gesture, S("panel_ready"))
+            self.status_badge.setText(friendly)
+            bg = "#1a3d38"
+            fg = "#00e8a0"
             if "click" in gesture.lower():
-                color = "#00e8a0"
+                bg, fg = "#1a3d2a", "#00e8a0"
             elif "drag" in gesture.lower():
-                color = "#ff88cc"
+                bg, fg = "#3a1a30", "#ff88cc"
             elif "scroll" in gesture.lower():
-                color = "#88aaff"
+                bg, fg = "#1a2a3d", "#88aaff"
             elif "safety" in gesture.lower():
-                color = "#ff6666"
-            self.gesture_label["value"].setStyleSheet(f"color: {color}; font-weight: bold;")
+                bg, fg = "#3d2a1a", "#ffaa44"
+            self.status_badge.setStyleSheet(
+                f"background-color: {bg}; color: {fg}; border-radius: 12px; padding: 8px;")
+
+        # -- Gaze toggle --
+        if c.gaze_detection_enabled:
+            self.gaze_btn.setText(S("panel_gaze_on"))
+            self.gaze_btn.setStyleSheet(self.TOGGLE_ON)
+        else:
+            self.gaze_btn.setText(S("panel_gaze_off"))
+            self.gaze_btn.setStyleSheet(self.TOGGLE_OFF)
+
+        # -- Dwell toggle --
+        if c.dwell_click_enabled:
+            self.dwell_btn.setText(S("panel_dwell_on"))
+            self.dwell_btn.setStyleSheet(self.TOGGLE_ON)
+        else:
+            self.dwell_btn.setText(S("panel_dwell_off"))
+            self.dwell_btn.setStyleSheet(self.TOGGLE_OFF)
 
     def keyPressEvent(self, event):
         key = event.key()
         if key == Qt.Key_G:
-            self.controller.toggle_gaze_detection()
-            self._update_status()
+            self._toggle_gaze()
         elif key == Qt.Key_D:
-            self.controller.toggle_dwell_click()
-            self._update_status()
+            self._toggle_dwell()
         elif key == Qt.Key_C:
             self.recal_btn.click()
         elif key == Qt.Key_Q or key == Qt.Key_Escape:
@@ -1142,6 +1702,10 @@ class HandCenterGestureController:
         self._apply_config(raw)
         self.profile_name = name
 
+        # Restore language preference
+        if "language" in raw:
+            set_language(raw["language"])
+
         # Reset smoothing state for new profile
         self.smoothed_screen_pos = None
         self._smoothed_pass2 = None
@@ -1193,6 +1757,7 @@ class HandCenterGestureController:
             },
             "gaze_detection_enabled": self.gaze_detection_enabled,
             "gesture_actions": self.gesture_actions,
+            "language": _current_lang,
         }
         path = os.path.join(PROFILES_DIR, f"{self.profile_name}.json")
         with open(path, "w") as f:
@@ -2057,6 +2622,14 @@ class HandCenterGestureController:
         print("AirPoint stopped.")
 
 if __name__ == "__main__":
+    # In production (frozen exe), suppress all console output
+    if FROZEN:
+        sys.stdout = open(os.devnull, "w")
+        sys.stderr = open(os.devnull, "w")
+
+    # Install global exception hook so crashes inside Qt event loops also get caught
+    sys.excepthook = show_crash_dialog
+
     parser = argparse.ArgumentParser(description="AirPoint - Gesture-powered mouse controller")
     parser.add_argument("--profile", type=str, default=None,
                         help="Load a saved profile by name (skips profile selector)")
@@ -2096,7 +2669,5 @@ if __name__ == "__main__":
         print("\nInterrupted by user")
     except SystemExit:
         pass
-    except Exception as e:
-        print(f"Error: {e}")
-        import traceback
-        traceback.print_exc()
+    except Exception:
+        show_crash_dialog(*sys.exc_info())

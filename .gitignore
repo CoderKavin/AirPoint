@@ -4,3 +4,7 @@ __pycache__/
 profiles/
 .claude/
 .DS_Store
+build/
+dist/
+*.dmg
+*.zip
