@@ -16,11 +16,14 @@ import shutil
 import zipfile
 import tempfile
 import subprocess
+import traceback
 import urllib.request
 import urllib.error
+from datetime import datetime
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 VERSION_FILE = os.path.join(APP_DIR, "VERSION")
+CRASH_LOG = os.path.join(APP_DIR, "crash.log")
 REPO = "CoderKavin/chetana-version-build"
 API_URL = f"https://api.github.com/repos/{REPO}/releases/latest"
 
@@ -157,5 +160,40 @@ def main():
     os.execv(sys.executable, [sys.executable, main_py] + extra_args)
 
 
+def _show_launcher_crash(exc_type, exc_value, exc_tb):
+    """Write crash log and show a simple Tk error dialog (PyQt5 may not be available yet)."""
+    try:
+        tb_text = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
+        entry = (
+            f"\n{'='*60}\n"
+            f"LAUNCHER CRASH  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+            f"{'='*60}\n"
+            f"{tb_text}\n"
+        )
+        with open(CRASH_LOG, "a", encoding="utf-8") as f:
+            f.write(entry)
+    except Exception:
+        pass
+    # Try tkinter (always available in Python) for a minimal dialog
+    try:
+        import tkinter as tk
+        from tkinter import messagebox
+        root = tk.Tk()
+        root.withdraw()
+        messagebox.showerror(
+            "AirPoint Launcher Error",
+            f"The launcher ran into a problem:\n\n{exc_type.__name__}: {exc_value}\n\n"
+            f"Details saved to crash.log"
+        )
+        root.destroy()
+    except Exception:
+        traceback.print_exception(exc_type, exc_value, exc_tb)
+
+
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except (KeyboardInterrupt, SystemExit):
+        pass
+    except Exception:
+        _show_launcher_crash(*sys.exc_info())
