@@ -5,7 +5,7 @@ Produces a single folder (not one-file) so profiles/ can live alongside it.
 """
 import os
 import sys
-from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules, collect_dynamic_libs
 
 block_cipher = None
 
@@ -13,12 +13,17 @@ block_cipher = None
 mediapipe_datas = collect_data_files('mediapipe')
 mediapipe_imports = collect_submodules('mediapipe')
 
+# Collect native .pyd/.dll/.so files that mediapipe and its deps need at runtime
+mediapipe_binaries = collect_dynamic_libs('mediapipe')
+cv2_binaries = collect_dynamic_libs('cv2')
+protobuf_binaries = collect_dynamic_libs('google.protobuf')
+
 PROJECT_DIR = os.path.dirname(os.path.abspath(SPEC))
 
 a = Analysis(
     [os.path.join(PROJECT_DIR, 'airpoint_entry.py')],
     pathex=[PROJECT_DIR],
-    binaries=[],
+    binaries=mediapipe_binaries + cv2_binaries + protobuf_binaries,
     datas=[
         # App files
         (os.path.join(PROJECT_DIR, 'main.py'), '.'),
@@ -41,12 +46,13 @@ a = Analysis(
         'PyQt5.sip',
         'google.protobuf',
         'google.protobuf.descriptor',
+        'mediapipe.python._framework_bindings',
     ] + mediapipe_imports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
     excludes=[
-        'scipy', 'tkinter',
+        'scipy',
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,

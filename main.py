@@ -24,8 +24,29 @@ import logging
 from datetime import datetime
 from collections import deque
 
+# Windows DPI awareness — must be set before any GUI calls so pyautogui
+# coordinates match the actual screen resolution on high-DPI displays.
+if sys.platform == "win32":
+    try:
+        import ctypes
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)  # PROCESS_PER_MONITOR_DPI_AWARE
+    except Exception:
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()
+        except Exception:
+            pass
+
 if FROZEN:
     logging.disable(logging.CRITICAL)  # silence all Python logging
+    # Help PyQt5 find its platform plugins inside the PyInstaller bundle
+    for _candidate in [
+        os.path.join(sys._MEIPASS, "PyQt5", "Qt5", "plugins"),
+        os.path.join(sys._MEIPASS, "PyQt5", "Qt", "plugins"),
+        os.path.join(sys._MEIPASS, "qt5_plugins"),
+    ]:
+        if os.path.isdir(_candidate):
+            os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] = _candidate
+            break
 
 from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
                               QLabel, QPushButton, QLineEdit, QListWidget,
@@ -1494,6 +1515,35 @@ class StatusPanel(QWidget):
 
 
 class HandCenterGestureController:
+    @staticmethod
+    def _show_startup_error(title, message):
+        """Show a startup error dialog using PyQt5 (or tkinter as fallback)."""
+        try:
+            app = QApplication.instance() or QApplication(sys.argv)
+            from PyQt5.QtWidgets import QMessageBox
+            msg = QMessageBox()
+            msg.setIcon(QMessageBox.Critical)
+            msg.setWindowTitle(title)
+            msg.setText(message)
+            msg.setStyleSheet("""
+                QMessageBox { background-color: #1e1e23; color: #ddd; }
+                QLabel { color: #ddd; font-size: 13px; }
+                QPushButton { background-color: #2a2a32; color: #ddd; border: 1px solid #444;
+                              border-radius: 6px; padding: 6px 18px; min-width: 80px; }
+                QPushButton:hover { background-color: #3a3a44; }
+            """)
+            msg.exec_()
+        except Exception:
+            try:
+                import tkinter as tk
+                from tkinter import messagebox
+                root = tk.Tk()
+                root.withdraw()
+                messagebox.showerror(title, message)
+                root.destroy()
+            except Exception:
+                print(f"{title}\n{message}")
+
     def __init__(self, enable_gaze_detection=True):
         # Apply all defaults from DEFAULT_CONFIG first (sets every configurable attribute)
         self._apply_config(DEFAULT_CONFIG)
@@ -1533,14 +1583,61 @@ class HandCenterGestureController:
 
         # Initialize camera
         self.cap = cv2.VideoCapture(0)
+        if not self.cap.isOpened():
+            self._show_startup_error(
+                S("crash_title"),
+                "AirPoint could not access your camera.\n\n"
+                "Please check:\n"
+                "- Your computer has a camera\n"
+                "- No other app is using the camera (Zoom, Teams, etc.)\n"
+                "- Camera permissions are allowed for AirPoint"
+            )
+            raise SystemExit(1)
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+
+        # Verify we can actually read a frame (catches macOS permission denied)
+        ret, _ = self.cap.read()
+        if not ret:
+            self.cap.release()
+            self._show_startup_error(
+                S("crash_title"),
+                "AirPoint could not read from your camera.\n\n"
+                "On macOS: Go to System Settings > Privacy & Security > Camera\n"
+                "and allow access for AirPoint (or Terminal if running from source).\n\n"
+                "On Windows: Make sure no other app is using the camera."
+            )
+            raise SystemExit(1)
 
         # Control settings
         pyautogui.FAILSAFE = True
         pyautogui.PAUSE = 0
 
-        # Screen dimensions
+        # macOS: check Accessibility permission (needed for cursor control)
+        if sys.platform == "darwin":
+            try:
+                import subprocess
+                # Use AppleScript to check — returns error if no Accessibility access
+                result = subprocess.run(
+                    ["osascript", "-e", 'tell application "System Events" to get name of first process'],
+                    capture_output=True, timeout=5
+                )
+                if result.returncode != 0:
+                    raise PermissionError("Accessibility denied")
+            except PermissionError:
+                self.cap.release()
+                self._show_startup_error(
+                    S("crash_title"),
+                    "AirPoint needs Accessibility permission to control the cursor.\n\n"
+                    "Go to System Settings > Privacy & Security > Accessibility\n"
+                    "and allow access for AirPoint (or Terminal if running from source).\n\n"
+                    "Then relaunch AirPoint."
+                )
+                raise SystemExit(1)
+            except Exception:
+                pass  # If check itself fails, don't block — let pyautogui try anyway
+
+        # Screen dimensions (DPI-aware on Windows)
         self.screen_width, self.screen_height = pyautogui.size()
 
         # Gesture state (not configurable — runtime state)
@@ -2516,7 +2613,17 @@ class HandCenterGestureController:
         """Single frame of the tracking loop, driven by QTimer."""
         ret, frame = self.cap.read()
         if not ret:
+            self._cam_fail_count = getattr(self, '_cam_fail_count', 0) + 1
+            if self._cam_fail_count >= 90:  # ~3 seconds at 30fps
+                self._show_startup_error(
+                    S("crash_title"),
+                    "AirPoint lost access to the camera.\n\n"
+                    "The camera may have been disconnected or\n"
+                    "another app may have taken control of it."
+                )
+                raise SystemExit(1)
             return
+        self._cam_fail_count = 0
 
         frame = cv2.flip(frame, 1)
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
