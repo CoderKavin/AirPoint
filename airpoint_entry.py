@@ -5,6 +5,17 @@ Runs the auto-updater, then launches the main app, all in one process.
 import os
 import sys
 
+# Windows DPI awareness — must be set before any GUI/pyautogui calls
+if sys.platform == "win32":
+    try:
+        import ctypes
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+    except Exception:
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()
+        except Exception:
+            pass
+
 # Suppress all warnings/logs before any heavy imports
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 os.environ["MEDIAPIPE_DISABLE_GPU"] = "1"
@@ -64,9 +75,83 @@ def run_updater():
         pass  # never let update failure prevent app from launching
 
 
+def _show_dll_error(exc):
+    """Auto-download and install VC++ Runtime when native DLLs fail to load."""
+    if sys.platform != "win32":
+        return
+
+    VC_URL = "https://aka.ms/vs/17/release/vc_redist.x64.exe"
+
+    try:
+        import tkinter as tk
+        from tkinter import messagebox
+        root = tk.Tk()
+        root.withdraw()
+
+        answer = messagebox.askyesno(
+            "AirPoint — One-time Setup",
+            "AirPoint needs to install a small system component "
+            "(Microsoft Visual C++ Runtime) to run.\n\n"
+            "This is a one-time setup and only takes a moment.\n\n"
+            "Install now?"
+        )
+
+        if answer:
+            import urllib.request
+            import tempfile
+            import subprocess
+
+            installer = os.path.join(tempfile.gettempdir(), "vc_redist.x64.exe")
+
+            # Show a "downloading" message
+            info = tk.Toplevel(root)
+            info.title("AirPoint")
+            info.geometry("340x80")
+            info.resizable(False, False)
+            tk.Label(info, text="Downloading required component...\nThis will only take a moment.", pady=20).pack()
+            info.update()
+
+            urllib.request.urlretrieve(VC_URL, installer)
+            info.destroy()
+
+            # Run the installer silently — /install /passive does not need admin
+            # and shows a small progress bar
+            subprocess.run([installer, "/install", "/passive", "/norestart"], check=False)
+
+            os.remove(installer)
+
+            messagebox.showinfo(
+                "AirPoint",
+                "Setup complete! AirPoint will now start.\n\n"
+                "Please relaunch AirPoint."
+            )
+        else:
+            messagebox.showinfo(
+                "AirPoint",
+                "AirPoint can't run without this component.\n"
+                "You can relaunch AirPoint to install it later."
+            )
+
+        root.destroy()
+
+    except Exception:
+        # If anything fails, fall back to a plain message
+        print(
+            "AirPoint needs the Microsoft Visual C++ Redistributable.\n"
+            "Download it from: https://aka.ms/vs/17/release/vc_redist.x64.exe\n"
+            "Then restart AirPoint."
+        )
+
+
 def run_app():
     """Launch the main AirPoint application."""
-    import main
+    try:
+        import main
+    except ImportError as e:
+        if "_framework_bindings" in str(e) or "DLL load failed" in str(e):
+            _show_dll_error(e)
+            raise SystemExit(1)
+        raise
     # Override main's APP_DIR in case it was set differently
     main.APP_DIR = APP_DIR
     main.PROFILES_DIR = os.path.join(APP_DIR, "profiles")
