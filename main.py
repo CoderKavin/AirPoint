@@ -1788,8 +1788,16 @@ class HandCenterGestureController:
         path = os.path.join(PROFILES_DIR, f"{name}.json")
         if not os.path.exists(path):
             return False
-        with open(path, "r") as f:
-            raw = json.load(f)
+        try:
+            with open(path, "r") as f:
+                raw = json.load(f)
+        except (json.JSONDecodeError, ValueError) as e:
+            print(f"Error: Corrupted profile '{name}': {e}")
+            return False
+
+        if not isinstance(raw, dict):
+            print(f"Error: Profile '{name}' is not a valid JSON object")
+            return False
 
         # Detect and migrate old-format profiles
         if "schema_version" not in raw:
@@ -1814,7 +1822,7 @@ class HandCenterGestureController:
 
         # Print summary
         cal = self.calibration
-        if cal:
+        if cal and all(k in cal for k in ('left', 'right', 'top', 'bottom')):
             tremor_str = f", tremor={cal['tremor_std']:.5f}" if cal.get("tremor_std") else ""
             print(f"Loaded profile '{name}': L={cal['left']:.3f} R={cal['right']:.3f} "
                   f"T={cal['top']:.3f} B={cal['bottom']:.3f}{tremor_str}")
@@ -1873,18 +1881,24 @@ class HandCenterGestureController:
             # Add a small margin so edges are reachable
             range_x = cal["right"] - cal["left"]
             range_y = cal["bottom"] - cal["top"]
-            margin_x = range_x * self.calibration_margin
-            margin_y = range_y * self.calibration_margin
 
-            norm_x = (hand_x - (cal["left"] - margin_x)) / (range_x + 2 * margin_x)
-            norm_y = (hand_y - (cal["top"] - margin_y)) / (range_y + 2 * margin_y)
+            # Guard against zero range (bad calibration data)
+            if range_x == 0 or range_y == 0:
+                raw_x = hand_x * self.screen_width
+                raw_y = hand_y * self.screen_height
+            else:
+                margin_x = range_x * self.calibration_margin
+                margin_y = range_y * self.calibration_margin
 
-            # Clamp to [0, 1]
-            norm_x = max(0.0, min(1.0, norm_x))
-            norm_y = max(0.0, min(1.0, norm_y))
+                norm_x = (hand_x - (cal["left"] - margin_x)) / (range_x + 2 * margin_x)
+                norm_y = (hand_y - (cal["top"] - margin_y)) / (range_y + 2 * margin_y)
 
-            raw_x = norm_x * self.screen_width
-            raw_y = norm_y * self.screen_height
+                # Clamp to [0, 1]
+                norm_x = max(0.0, min(1.0, norm_x))
+                norm_y = max(0.0, min(1.0, norm_y))
+
+                raw_x = norm_x * self.screen_width
+                raw_y = norm_y * self.screen_height
 
         # Velocity-adaptive smoothing: more smoothing when hand is slow (tremor),
         # less smoothing when hand moves fast (intentional movement).
@@ -2172,7 +2186,7 @@ class HandCenterGestureController:
                         print("🛑 SAFETY: Stopped drag - user not looking at screen")
                     else:
                         print("🛑 Stopped drag")
-                except:
+                except Exception:
                     pass
                 self.is_dragging = False
                 self.drag_start_hand_pos = None
@@ -2643,7 +2657,7 @@ class HandCenterGestureController:
             if self.is_dragging:
                 try:
                     pyautogui.mouseUp(button='left')
-                except:
+                except Exception:
                     pass
                 self.is_dragging = False
 
@@ -2722,7 +2736,7 @@ class HandCenterGestureController:
         if self.is_dragging:
             try:
                 pyautogui.mouseUp(button='left')
-            except:
+            except Exception:
                 pass
 
         self.cap.release()
