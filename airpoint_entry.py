@@ -75,6 +75,11 @@ def run_updater():
         pass  # never let update failure prevent app from launching
 
 
+def _vc_runtime_installed():
+    """Check if VC++ Runtime marker exists (set after successful install)."""
+    return os.path.exists(os.path.join(APP_DIR, ".vc_installed"))
+
+
 def _show_dll_error(exc):
     """Auto-download and install VC++ Runtime when native DLLs fail to load."""
     if sys.platform != "win32":
@@ -87,6 +92,21 @@ def _show_dll_error(exc):
         from tkinter import messagebox
         root = tk.Tk()
         root.withdraw()
+
+        # If we already installed the runtime before, don't offer again —
+        # the problem is something else (needs reboot, wrong arch, etc.)
+        if _vc_runtime_installed():
+            messagebox.showerror(
+                "AirPoint",
+                "AirPoint is still unable to load required system libraries.\n\n"
+                "Please try:\n"
+                "1. Restart your computer\n"
+                "2. Reinstall the Microsoft Visual C++ Redistributable from:\n"
+                "   https://aka.ms/vs/17/release/vc_redist.x64.exe\n"
+                "3. Then relaunch AirPoint."
+            )
+            root.destroy()
+            return
 
         answer = messagebox.askyesno(
             "AirPoint — One-time Setup",
@@ -120,10 +140,17 @@ def _show_dll_error(exc):
 
             os.remove(installer)
 
+            # Mark that we've completed the install so we don't loop
+            try:
+                with open(os.path.join(APP_DIR, ".vc_installed"), "w") as f:
+                    f.write("1")
+            except OSError:
+                pass
+
             messagebox.showinfo(
                 "AirPoint",
-                "Setup complete! AirPoint will now start.\n\n"
-                "Please relaunch AirPoint."
+                "Setup complete! Please relaunch AirPoint.\n\n"
+                "If AirPoint still doesn't start, try restarting your computer."
             )
         else:
             messagebox.showinfo(
