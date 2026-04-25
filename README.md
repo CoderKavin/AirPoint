@@ -50,6 +50,6 @@ Built with **MediaPipe**, **OpenCV**, and **PyAutoGUI**.
 Clone the repo and install requirements:
 
 ```bash
-git clone https://github.com/yourusername/airpoint.git
+git clone https://github.com/coderkavin/airpoint.git
 cd airpoint
 pip install -r requirements.txt
