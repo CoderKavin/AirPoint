@@ -1610,30 +1610,39 @@ class HandCenterGestureController:
             raise SystemExit(1)
 
         # Control settings
-        pyautogui.FAILSAFE = True
+        # FAILSAFE intentionally disabled: in a gesture-driven mouse, brief tracking
+        # glitches can fling the cursor to (0,0) and would kill the app. The user
+        # can always quit with 'q' in the camera window or by closing the status panel.
+        pyautogui.FAILSAFE = False
         pyautogui.PAUSE = 0
 
-        # macOS: check Accessibility permission (needed for cursor control)
+        # macOS: check Accessibility permission (needed for cursor control).
+        # Uses AXIsProcessTrusted from ApplicationServices — the real Accessibility
+        # check. (The previous osascript-based check tested Automation permission,
+        # which is a different grant.)
         if sys.platform == "darwin":
             try:
-                import subprocess
-                # Use AppleScript to check — returns error if no Accessibility access
-                result = subprocess.run(
-                    ["osascript", "-e", 'tell application "System Events" to get name of first process'],
-                    capture_output=True, timeout=5
-                )
-                if result.returncode != 0:
-                    raise PermissionError("Accessibility denied")
-            except PermissionError:
-                self.cap.release()
-                self._show_startup_error(
-                    S("crash_title"),
-                    "AirPoint needs Accessibility permission to control the cursor.\n\n"
-                    "Go to System Settings > Privacy & Security > Accessibility\n"
-                    "and allow access for AirPoint (or Terminal if running from source).\n\n"
-                    "Then relaunch AirPoint."
-                )
-                raise SystemExit(1)
+                import ctypes
+                import ctypes.util
+                lib_path = ctypes.util.find_library("ApplicationServices")
+                if lib_path:
+                    appkit = ctypes.cdll.LoadLibrary(lib_path)
+                    appkit.AXIsProcessTrusted.restype = ctypes.c_bool
+                    is_trusted = appkit.AXIsProcessTrusted()
+                else:
+                    is_trusted = True  # framework unavailable — assume OK
+                if not is_trusted:
+                    self.cap.release()
+                    self._show_startup_error(
+                        S("crash_title"),
+                        "AirPoint needs Accessibility permission to control the cursor.\n\n"
+                        "Go to System Settings > Privacy & Security > Accessibility\n"
+                        "and allow access for AirPoint (or Terminal/Python if running from source).\n\n"
+                        "Then relaunch AirPoint."
+                    )
+                    raise SystemExit(1)
+            except SystemExit:
+                raise
             except Exception:
                 pass  # If check itself fails, don't block — let pyautogui try anyway
 

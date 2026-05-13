@@ -1,0 +1,2 @@
+# Drop your app icon here as `icon.png` (1024x1024 PNG, square, no transparency at edges).
+# The CI pipeline converts it to .icns (macOS) and .ico (Windows) automatically.
