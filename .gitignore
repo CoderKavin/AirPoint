@@ -8,3 +8,9 @@ build/
 dist/
 *.dmg
 *.zip
+# Generated from assets/icon.png by the build pipeline.
+assets/icon.icns
+assets/icon.ico
+assets/icon.iconset/
+crash.log
+.vc_installed

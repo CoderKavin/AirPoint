@@ -15,6 +15,15 @@ if sys.platform == "win32":
             ctypes.windll.user32.SetProcessDPIAware()
         except Exception:
             pass
+    # Force UTF-8 stdout/stderr so emoji debug prints don't choke cp1252 consoles.
+    # Only relevant in source-run mode — in the frozen bundle stdout is sent to devnull.
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        if stream is not None:
+            try:
+                stream.reconfigure(encoding="utf-8")
+            except Exception:
+                pass
 
 # Suppress all warnings/logs before any heavy imports
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
@@ -43,36 +52,29 @@ os.makedirs(os.path.join(APP_DIR, "profiles"), exist_ok=True)
 
 
 def run_updater():
-    """Check for updates (best-effort, never blocks launch on failure)."""
+    """Check for updates and apply one if the user accepts.
+    Exits the process via SystemExit(0) if an update is being installed —
+    the detached swap script then replaces our files and relaunches us.
+    Never blocks launch on failure.
+    """
     if "--skip-update" in sys.argv:
         return
     try:
-        # Import launcher module for update logic
         import launcher
-        # Override its APP_DIR to match ours
+        # Point the launcher module at our resolved APP_DIR
+        # (matters for the .app bundle on macOS, where APP_DIR is the folder
+        # CONTAINING AirPoint.app, not the bundle internals).
         launcher.APP_DIR = APP_DIR
         launcher.VERSION_FILE = os.path.join(APP_DIR, "VERSION")
         launcher.CRASH_LOG = os.path.join(APP_DIR, "crash.log")
 
-        result = launcher.check_for_update()
-        if result:
-            remote_tag, zip_url = result
-            try:
-                remote_ver = launcher.parse_version(remote_tag)
-                local_ver = launcher.parse_version(launcher.get_local_version())
-            except (ValueError, IndexError):
-                return
-            if remote_ver > local_ver:
-                import tempfile
-                import shutil
-                tmp_dir = tempfile.mkdtemp(prefix="airpoint_update_")
-                try:
-                    if launcher.download_and_extract(zip_url, tmp_dir):
-                        launcher.apply_update(tmp_dir)
-                finally:
-                    shutil.rmtree(tmp_dir, ignore_errors=True)
+        if launcher.perform_update_check():
+            # Update is staged; the swap script will take over.
+            raise SystemExit(0)
+    except SystemExit:
+        raise
     except Exception:
-        pass  # never let update failure prevent app from launching
+        pass  # Never let update failure prevent the app from launching.
 
 
 def _vc_runtime_installed():
@@ -136,22 +138,40 @@ def _show_dll_error(exc):
 
             # Run the installer silently — /install /passive does not need admin
             # and shows a small progress bar
-            subprocess.run([installer, "/install", "/passive", "/norestart"], check=False)
+            result = subprocess.run(
+                [installer, "/install", "/passive", "/norestart"], check=False
+            )
 
-            os.remove(installer)
-
-            # Mark that we've completed the install so we don't loop
             try:
-                with open(os.path.join(APP_DIR, ".vc_installed"), "w") as f:
-                    f.write("1")
+                os.remove(installer)
             except OSError:
                 pass
 
-            messagebox.showinfo(
-                "AirPoint",
-                "Setup complete! Please relaunch AirPoint.\n\n"
-                "If AirPoint still doesn't start, try restarting your computer."
-            )
+            # vc_redist exit codes: 0 = success, 1638 = newer already installed,
+            # 3010 = success but reboot required. Anything else = failure.
+            install_ok = result.returncode in (0, 1638, 3010)
+
+            if install_ok:
+                # Mark install complete so we don't offer it again next launch
+                try:
+                    with open(os.path.join(APP_DIR, ".vc_installed"), "w") as f:
+                        f.write("1")
+                except OSError:
+                    pass
+
+                messagebox.showinfo(
+                    "AirPoint",
+                    "Setup complete! Please relaunch AirPoint.\n\n"
+                    "If AirPoint still doesn't start, try restarting your computer."
+                )
+            else:
+                messagebox.showerror(
+                    "AirPoint",
+                    f"Setup didn't complete (installer exit code {result.returncode}).\n\n"
+                    "Please install the Microsoft Visual C++ Redistributable manually from:\n"
+                    "https://aka.ms/vs/17/release/vc_redist.x64.exe\n\n"
+                    "Then relaunch AirPoint."
+                )
         else:
             messagebox.showinfo(
                 "AirPoint",
@@ -170,12 +190,26 @@ def _show_dll_error(exc):
         )
 
 
+def _looks_like_native_load_failure(exc):
+    """Heuristic: does this exception look like a missing VC++ runtime / native lib?"""
+    msg = str(exc).upper()
+    return any(token in msg for token in (
+        "_FRAMEWORK_BINDINGS",
+        "DLL LOAD FAILED",
+        "MSVCP",
+        "MSVCR",
+        "VCRUNTIME",
+        "VCOMP",
+        "API-MS-WIN",
+    ))
+
+
 def run_app():
     """Launch the main AirPoint application."""
     try:
         import main
-    except ImportError as e:
-        if "_framework_bindings" in str(e) or "DLL load failed" in str(e):
+    except (ImportError, OSError) as e:
+        if _looks_like_native_load_failure(e):
             _show_dll_error(e)
             raise SystemExit(1)
         raise
@@ -216,6 +250,15 @@ def run_app():
             controller.dwell_click_enabled = True
         if args.profile:
             if not controller.load_profile(args.profile):
+                # Profile didn't exist or failed to load. Keep the name so a save
+                # creates it, but make sure the user knows defaults are in use.
+                try:
+                    sys.__stderr__.write(
+                        f"AirPoint: profile '{args.profile}' not found — "
+                        f"using defaults; will be created on first save.\n"
+                    )
+                except Exception:
+                    pass
                 controller.profile_name = args.profile
             # else loaded successfully
         controller.run()

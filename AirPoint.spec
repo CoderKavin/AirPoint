@@ -5,6 +5,7 @@ Produces a single folder (not one-file) so profiles/ can live alongside it.
 """
 import os
 import sys
+import platform
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules, collect_dynamic_libs
 
 block_cipher = None
@@ -19,6 +20,17 @@ cv2_binaries = collect_dynamic_libs('cv2')
 protobuf_binaries = collect_dynamic_libs('google.protobuf')
 
 PROJECT_DIR = os.path.dirname(os.path.abspath(SPEC))
+
+# Platform-specific icon. Falls back to no icon if the file isn't present
+# (e.g. during local dev before the icon has been generated).
+_ICON_MAC = os.path.join(PROJECT_DIR, 'assets', 'icon.icns')
+_ICON_WIN = os.path.join(PROJECT_DIR, 'assets', 'icon.ico')
+if platform.system() == 'Darwin' and os.path.exists(_ICON_MAC):
+    APP_ICON = _ICON_MAC
+elif platform.system() == 'Windows' and os.path.exists(_ICON_WIN):
+    APP_ICON = _ICON_WIN
+else:
+    APP_ICON = None
 
 a = Analysis(
     [os.path.join(PROJECT_DIR, 'airpoint_entry.py')],
@@ -78,6 +90,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon=APP_ICON,
 )
 
 coll = COLLECT(
@@ -92,12 +105,11 @@ coll = COLLECT(
 )
 
 # macOS only: wrap into a .app bundle
-import platform
 if platform.system() == 'Darwin':
     app = BUNDLE(
         coll,
         name='AirPoint.app',
-        icon=None,
+        icon=APP_ICON,
         bundle_identifier='org.chetana.airpoint',
         info_plist={
             'CFBundleName': 'AirPoint',

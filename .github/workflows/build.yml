@@ -1,3 +1,27 @@
+# AirPoint build pipeline.
+#
+# On any push: builds both platforms unsigned (used for sanity checks).
+# On a tag push (v*): builds, signs, notarizes the Mac DMG, and publishes a release.
+#
+# REQUIRED REPO SECRETS for notarized releases (Settings -> Secrets -> Actions):
+#
+#   APPLE_CERTIFICATE_BASE64
+#       Your Developer ID Application certificate (.p12), base64-encoded:
+#           base64 -i DeveloperID.p12 | pbcopy
+#   APPLE_CERTIFICATE_PASSWORD
+#       The password you set when exporting the .p12 from Keychain Access.
+#   APPLE_DEVELOPER_ID
+#       Full identity name, e.g.: "Developer ID Application: Kavin Venkat (ABCDE12345)"
+#   APPLE_ID
+#       Your Apple ID email.
+#   APPLE_TEAM_ID
+#       10-character team ID from developer.apple.com membership page.
+#   APPLE_APP_PASSWORD
+#       App-specific password (appleid.apple.com -> Sign-In and Security ->
+#       App-Specific Passwords). NOT your regular Apple ID password.
+#   KEYCHAIN_PASSWORD
+#       Any random string. Used only inside the CI runner's temporary keychain.
+
 name: Build AirPoint
 
 on:
@@ -21,6 +45,17 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+          pip install pillow
+
+      - name: Generate .ico from PNG
+        shell: bash
+        run: |
+          if [ -f assets/icon.png ]; then
+            python -c "from PIL import Image; Image.open('assets/icon.png').save('assets/icon.ico', sizes=[(256,256),(128,128),(64,64),(48,48),(32,32),(16,16)])"
+            echo "Generated assets/icon.ico"
+          else
+            echo "::warning::assets/icon.png not found - building without icon"
+          fi
 
       - name: Build with PyInstaller
         run: pyinstaller AirPoint.spec --noconfirm
@@ -46,12 +81,99 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Generate .icns from PNG
+        run: |
+          if [ -f assets/icon.png ]; then
+            ICONSET="assets/icon.iconset"
+            mkdir -p "$ICONSET"
+            sips -z 16 16     assets/icon.png --out "$ICONSET/icon_16x16.png"
+            sips -z 32 32     assets/icon.png --out "$ICONSET/icon_16x16@2x.png"
+            sips -z 32 32     assets/icon.png --out "$ICONSET/icon_32x32.png"
+            sips -z 64 64     assets/icon.png --out "$ICONSET/icon_32x32@2x.png"
+            sips -z 128 128   assets/icon.png --out "$ICONSET/icon_128x128.png"
+            sips -z 256 256   assets/icon.png --out "$ICONSET/icon_128x128@2x.png"
+            sips -z 256 256   assets/icon.png --out "$ICONSET/icon_256x256.png"
+            sips -z 512 512   assets/icon.png --out "$ICONSET/icon_256x256@2x.png"
+            sips -z 512 512   assets/icon.png --out "$ICONSET/icon_512x512.png"
+            cp assets/icon.png "$ICONSET/icon_512x512@2x.png"
+            iconutil -c icns "$ICONSET" -o assets/icon.icns
+            echo "Generated assets/icon.icns"
+          else
+            echo "::warning::assets/icon.png not found - building without icon"
+          fi
+
       - name: Build with PyInstaller
         run: pyinstaller AirPoint.spec --noconfirm
 
+      - name: Import signing certificate
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          echo "$APPLE_CERTIFICATE_BASE64" | base64 --decode > certificate.p12
+          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security set-keychain-settings -lut 3600 build.keychain
+          security import certificate.p12 -k build.keychain \
+            -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign -T /usr/bin/productsign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" build.keychain
+          rm certificate.p12
+
+      - name: Sign app bundle (inner binaries then outer)
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          APPLE_DEVELOPER_ID: ${{ secrets.APPLE_DEVELOPER_ID }}
+        run: |
+          APP="dist/AirPoint.app"
+          ENT="scripts/entitlements.plist"
+          # Sign every embedded dylib/.so first (inside-out is the safe order;
+          # --deep is unreliable for PyInstaller bundles).
+          find "$APP" -type f \( -name "*.dylib" -o -name "*.so" \) -print0 | \
+            xargs -0 -I{} codesign --force --options runtime --timestamp \
+              --sign "$APPLE_DEVELOPER_ID" "{}"
+          # Sign any other Mach-O executables PyInstaller produced.
+          find "$APP/Contents" -type f -perm +111 ! -name "*.dylib" ! -name "*.so" \
+            ! -name "*.py" ! -name "*.txt" ! -name "*.json" -print0 2>/dev/null | \
+            xargs -0 -I{} codesign --force --options runtime --timestamp \
+              --sign "$APPLE_DEVELOPER_ID" "{}" 2>/dev/null || true
+          # Sign the .app bundle itself with entitlements.
+          codesign --force --options runtime --timestamp \
+            --entitlements "$ENT" \
+            --sign "$APPLE_DEVELOPER_ID" "$APP"
+          # Verify the signature is well-formed before notarizing.
+          codesign --verify --deep --strict --verbose=2 "$APP"
+
       - name: Create DMG
         run: |
-          hdiutil create -volname "AirPoint" -srcfolder dist/AirPoint.app -ov -format UDZO AirPoint.dmg
+          hdiutil create -volname "AirPoint" -srcfolder dist/AirPoint.app \
+            -ov -format UDZO AirPoint.dmg
+
+      - name: Sign DMG
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          APPLE_DEVELOPER_ID: ${{ secrets.APPLE_DEVELOPER_ID }}
+        run: codesign --force --sign "$APPLE_DEVELOPER_ID" --timestamp AirPoint.dmg
+
+      - name: Notarize and staple DMG
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          xcrun notarytool submit AirPoint.dmg \
+            --apple-id "$APPLE_ID" \
+            --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_PASSWORD" \
+            --wait
+          xcrun stapler staple AirPoint.dmg
+          # Final sanity check that Gatekeeper will accept it.
+          spctl -a -t open --context context:primary-signature -v AirPoint.dmg
 
       - name: Upload macOS DMG
         uses: actions/upload-artifact@v4
