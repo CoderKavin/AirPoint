@@ -1,5 +1,6 @@
 # ---------- Production mode: suppress warnings before any imports ----------
 import sys
+import subprocess
 FROZEN = getattr(sys, 'frozen', False)
 if FROZEN:
     import os as _os
@@ -1516,8 +1517,11 @@ class StatusPanel(QWidget):
 
 class HandCenterGestureController:
     @staticmethod
-    def _show_startup_error(title, message):
-        """Show a startup error dialog using PyQt5 (or tkinter as fallback)."""
+    def _show_startup_error(title, message, settings_url=None, settings_label="Open Settings"):
+        """Show a startup error dialog using PyQt5 (or tkinter as fallback).
+        If settings_url is provided, an extra button opens that URL so the user
+        can jump straight to the right system settings pane.
+        """
         try:
             app = QApplication.instance() or QApplication(sys.argv)
             from PyQt5.QtWidgets import QMessageBox
@@ -1525,6 +1529,10 @@ class HandCenterGestureController:
             msg.setIcon(QMessageBox.Critical)
             msg.setWindowTitle(title)
             msg.setText(message)
+            settings_btn = None
+            if settings_url:
+                settings_btn = msg.addButton(settings_label, QMessageBox.ActionRole)
+            msg.addButton(QMessageBox.Ok)
             msg.setStyleSheet("""
                 QMessageBox { background-color: #1e1e23; color: #ddd; }
                 QLabel { color: #ddd; font-size: 13px; }
@@ -1533,6 +1541,17 @@ class HandCenterGestureController:
                 QPushButton:hover { background-color: #3a3a44; }
             """)
             msg.exec_()
+            if settings_btn is not None and msg.clickedButton() is settings_btn:
+                try:
+                    if sys.platform == "darwin":
+                        subprocess.Popen(["open", settings_url])
+                    elif sys.platform == "win32":
+                        os.startfile(settings_url)
+                    else:
+                        import webbrowser
+                        webbrowser.open(settings_url)
+                except Exception:
+                    pass
         except Exception:
             try:
                 import tkinter as tk
@@ -1584,13 +1603,21 @@ class HandCenterGestureController:
         # Initialize camera
         self.cap = cv2.VideoCapture(0)
         if not self.cap.isOpened():
+            cam_url = (
+                "x-apple.systempreferences:com.apple.preference.security?Privacy_Camera"
+                if sys.platform == "darwin"
+                else "ms-settings:privacy-webcam"
+                if sys.platform == "win32"
+                else None
+            )
             self._show_startup_error(
                 S("crash_title"),
                 "AirPoint could not access your camera.\n\n"
-                "Please check:\n"
-                "- Your computer has a camera\n"
-                "- No other app is using the camera (Zoom, Teams, etc.)\n"
-                "- Camera permissions are allowed for AirPoint"
+                "1. Make sure your computer has a working camera.\n"
+                "2. Close any other app that may be using it (Zoom, Teams, FaceTime, browser tabs, etc.).\n"
+                "3. Allow camera access for AirPoint in your system settings, then relaunch.",
+                settings_url=cam_url,
+                settings_label="Open Camera Settings",
             )
             raise SystemExit(1)
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
@@ -1600,12 +1627,22 @@ class HandCenterGestureController:
         ret, _ = self.cap.read()
         if not ret:
             self.cap.release()
+            cam_url = (
+                "x-apple.systempreferences:com.apple.preference.security?Privacy_Camera"
+                if sys.platform == "darwin"
+                else "ms-settings:privacy-webcam"
+                if sys.platform == "win32"
+                else None
+            )
             self._show_startup_error(
                 S("crash_title"),
                 "AirPoint could not read from your camera.\n\n"
-                "On macOS: Go to System Settings > Privacy & Security > Camera\n"
-                "and allow access for AirPoint (or Terminal if running from source).\n\n"
-                "On Windows: Make sure no other app is using the camera."
+                "This usually means camera permission is off.\n\n"
+                "macOS: System Settings, then Privacy & Security, then Camera. Turn on AirPoint (or Terminal/Python if running from source).\n\n"
+                "Windows: Settings, then Privacy & security, then Camera. Make sure camera access is allowed.\n\n"
+                "Then relaunch AirPoint.",
+                settings_url=cam_url,
+                settings_label="Open Camera Settings",
             )
             raise SystemExit(1)
 
@@ -1635,10 +1672,11 @@ class HandCenterGestureController:
                     self.cap.release()
                     self._show_startup_error(
                         S("crash_title"),
-                        "AirPoint needs Accessibility permission to control the cursor.\n\n"
-                        "Go to System Settings > Privacy & Security > Accessibility\n"
-                        "and allow access for AirPoint (or Terminal/Python if running from source).\n\n"
-                        "Then relaunch AirPoint."
+                        "AirPoint needs Accessibility permission to move the cursor.\n\n"
+                        "Open System Settings, then Privacy & Security, then Accessibility, and turn on AirPoint (or Terminal/Python if you're running from source).\n\n"
+                        "Then relaunch AirPoint.",
+                        settings_url="x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+                        settings_label="Open Accessibility Settings",
                     )
                     raise SystemExit(1)
             except SystemExit:
@@ -2633,57 +2671,89 @@ class HandCenterGestureController:
             cv2.line(frame, thumb_pos, index_pos, (100, 100, 100), 1)
 
     def _tracking_tick(self):
-        """Single frame of the tracking loop, driven by QTimer."""
-        ret, frame = self.cap.read()
-        if not ret:
-            self._cam_fail_count = getattr(self, '_cam_fail_count', 0) + 1
-            if self._cam_fail_count >= 90:  # ~3 seconds at 30fps
+        """Single frame of the tracking loop, driven by QTimer.
+        Any exception inside is caught and logged. One bad frame from MediaPipe
+        or OpenCV should never crash the whole app.
+        """
+        try:
+            ret, frame = self.cap.read()
+            if not ret:
+                self._cam_fail_count = getattr(self, '_cam_fail_count', 0) + 1
+                if self._cam_fail_count >= 90:  # ~3 seconds at 30fps
+                    cam_url = (
+                        "x-apple.systempreferences:com.apple.preference.security?Privacy_Camera"
+                        if sys.platform == "darwin"
+                        else "ms-settings:privacy-webcam"
+                        if sys.platform == "win32"
+                        else None
+                    )
+                    self._show_startup_error(
+                        S("crash_title"),
+                        "AirPoint lost access to your camera.\n\n"
+                        "Another app may have taken it (Zoom, Teams, FaceTime, etc.), "
+                        "or the camera was unplugged. Close that app or reconnect the "
+                        "camera, then relaunch AirPoint.",
+                        settings_url=cam_url,
+                        settings_label="Open Camera Settings",
+                    )
+                    raise SystemExit(1)
+                return
+            self._cam_fail_count = 0
+
+            frame = cv2.flip(frame, 1)
+            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+            hand_results = self.hands.process(rgb_frame)
+            self.detect_face_and_gaze(frame)
+
+            gesture = "no_hand"
+
+            if hand_results.multi_hand_landmarks:
+                for hand_landmarks in hand_results.multi_hand_landmarks:
+                    landmarks = self.get_landmarks(hand_landmarks)
+                    extended_count, finger_states = self.count_extended_fingers(landmarks)
+                    gesture = self.detect_gestures(landmarks)
+            else:
+                # Clean up when hand lost
+                if self.is_dragging:
+                    try:
+                        pyautogui.mouseUp(button='left')
+                    except Exception:
+                        pass
+                    self.is_dragging = False
+
+                self.pinch_start_time = None
+                self.drag_start_hand_pos = None
+                self.drag_start_screen_pos = None
+                self.prev_hand_center = None
+                self.smoothed_screen_pos = None
+                self._smoothed_pass2 = None
+                self._prev_raw_pos = None
+                self._last_output_pos = None
+                self.scroll_reference_y = None
+                self.scroll_accumulated = 0
+                self.scroll_exit_counter = 0
+                self._reset_dwell()
+
+            self._last_gesture = gesture
+            self._tick_error_count = 0
+        except SystemExit:
+            raise
+        except Exception as e:
+            # One bad frame must not kill the app. Log and keep going.
+            _write_crash_log(type(e), e, e.__traceback__)
+            self._tick_error_count = getattr(self, '_tick_error_count', 0) + 1
+            # If errors keep coming for ~2 seconds straight, something is
+            # really wrong; show a dialog and exit cleanly.
+            if self._tick_error_count >= 60:
                 self._show_startup_error(
                     S("crash_title"),
-                    "AirPoint lost access to the camera.\n\n"
-                    "The camera may have been disconnected or\n"
-                    "another app may have taken control of it."
+                    "AirPoint kept running into an error while tracking your hand.\n\n"
+                    "Details have been saved to crash.log next to the app.\n"
+                    "Please relaunch AirPoint, and if this keeps happening, email "
+                    "kavinvenkatesanofficial@gmail.com with the crash.log file attached."
                 )
                 raise SystemExit(1)
-            return
-        self._cam_fail_count = 0
-
-        frame = cv2.flip(frame, 1)
-        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-
-        hand_results = self.hands.process(rgb_frame)
-        self.detect_face_and_gaze(frame)
-
-        gesture = "no_hand"
-
-        if hand_results.multi_hand_landmarks:
-            for hand_landmarks in hand_results.multi_hand_landmarks:
-                landmarks = self.get_landmarks(hand_landmarks)
-                extended_count, finger_states = self.count_extended_fingers(landmarks)
-                gesture = self.detect_gestures(landmarks)
-        else:
-            # Clean up when hand lost
-            if self.is_dragging:
-                try:
-                    pyautogui.mouseUp(button='left')
-                except Exception:
-                    pass
-                self.is_dragging = False
-
-            self.pinch_start_time = None
-            self.drag_start_hand_pos = None
-            self.drag_start_screen_pos = None
-            self.prev_hand_center = None
-            self.smoothed_screen_pos = None
-            self._smoothed_pass2 = None
-            self._prev_raw_pos = None
-            self._last_output_pos = None
-            self.scroll_reference_y = None
-            self.scroll_accumulated = 0
-            self.scroll_exit_counter = 0
-            self._reset_dwell()
-
-        self._last_gesture = gesture
 
     def run(self):
         """Main control loop using PyQt5 status panel."""
