@@ -21,6 +21,24 @@
 #       App-Specific Passwords). NOT your regular Apple ID password.
 #   KEYCHAIN_PASSWORD
 #       Any random string. Used only inside the CI runner's temporary keychain.
+#
+# REQUIRED REPO SECRETS for a signed Windows build (stops SmartScreen warnings
+# and Windows Defender from quarantining the bundled DLLs). Uses Azure Trusted
+# Signing (~$10/month, individual developers eligible) — see
+# https://learn.microsoft.com/azure/trusted-signing/ :
+#
+#   AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET
+#       Credentials for an Azure service principal with the
+#       "Trusted Signing Certificate Profile Signer" role.
+#   AZURE_SIGNING_ENDPOINT
+#       Your Trusted Signing account endpoint, e.g. https://eus.codesigning.azure.net
+#   AZURE_SIGNING_ACCOUNT
+#       The Trusted Signing account name.
+#   AZURE_SIGNING_PROFILE
+#       The certificate profile name within that account.
+#
+# If these secrets are absent the Windows build still works — it just ships
+# unsigned, and users will hit SmartScreen / Defender warnings on first run.
 
 name: Build AirPoint
 
@@ -33,6 +51,11 @@ on:
 jobs:
   build-windows:
     runs-on: windows-latest
+    env:
+      # Mirrored from a secret so the signing step's `if:` can detect whether
+      # signing is configured — the `secrets` context can't be used in `if:`,
+      # but a job-level `env` value can.
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
     steps:
       - uses: actions/checkout@v4
 
@@ -59,6 +82,23 @@ jobs:
 
       - name: Build with PyInstaller
         run: pyinstaller AirPoint.spec --noconfirm
+
+      # Sign the .exe AND every bundled .dll/.pyd. Signing the whole folder is
+      # what stops Windows Defender from quarantining individual files inside
+      # _internal. Skipped automatically if the Azure secrets aren't set.
+      - name: Sign Windows build
+        if: startsWith(github.ref, 'refs/tags/v') && env.AZURE_CLIENT_ID != ''
+        uses: azure/artifact-signing-action@v2
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ secrets.AZURE_SIGNING_PROFILE }}
+          files-folder: dist/AirPoint
+          files-folder-filter: exe,dll,pyd
+          files-folder-recurse: true
 
       - name: Upload Windows build
         uses: actions/upload-artifact@v4

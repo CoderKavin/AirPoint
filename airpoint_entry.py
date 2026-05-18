@@ -82,8 +82,24 @@ def _vc_runtime_installed():
     return os.path.exists(os.path.join(APP_DIR, ".vc_installed"))
 
 
-def _show_dll_error(exc):
-    """Auto-download and install VC++ Runtime when native DLLs fail to load."""
+def _write_dll_log(exc):
+    """Record the native-load failure to dll_error.log so the real cause
+    (which module/DLL failed) can be diagnosed instead of guessed."""
+    try:
+        import traceback
+        log_path = os.path.join(APP_DIR, "dll_error.log")
+        with open(log_path, "w", encoding="utf-8") as f:
+            f.write("AirPoint failed to load a required native library.\n\n")
+            f.write(f"Error: {exc}\n\n")
+            f.write("Full traceback:\n")
+            f.write(traceback.format_exc())
+        return log_path
+    except Exception:
+        return None
+
+
+def _show_dll_error(exc, log_path=None):
+    """Explain a native-DLL load failure; offer a one-time VC++ install."""
     if sys.platform != "win32":
         return
 
@@ -98,14 +114,25 @@ def _show_dll_error(exc):
         # If we already installed the runtime before, don't offer again —
         # the problem is something else (needs reboot, wrong arch, etc.)
         if _vc_runtime_installed():
+            details = f"\n\nA log was saved to:\n{log_path}" if log_path else ""
             messagebox.showerror(
                 "AirPoint",
-                "AirPoint is still unable to load required system libraries.\n\n"
-                "Please try:\n"
-                "1. Restart your computer\n"
-                "2. Reinstall the Microsoft Visual C++ Redistributable from:\n"
-                "   https://aka.ms/vs/17/release/vc_redist.x64.exe\n"
-                "3. Then relaunch AirPoint."
+                "AirPoint can't load a required native library.\n\n"
+                f"Failed component:\n{exc}\n\n"
+                "Visual C++ is already installed, so this is NOT a VC++ "
+                "problem. The most likely cause is that Windows Defender "
+                "quarantined a file inside AirPoint's own folder "
+                "(the 'AirPoint\\_internal' folder), leaving the app "
+                "incomplete.\n\n"
+                "To fix it:\n"
+                "1. Open Windows Security -> Virus & threat protection -> "
+                "Protection history, and click Restore on anything listed "
+                "for AirPoint.\n"
+                "2. Under Manage settings -> Exclusions, add the AirPoint "
+                "folder as an exclusion.\n"
+                "3. Delete the AirPoint folder, then re-extract the "
+                "download into the excluded location and relaunch."
+                + details
             )
             root.destroy()
             return
@@ -184,9 +211,12 @@ def _show_dll_error(exc):
     except Exception:
         # If anything fails, fall back to a plain message
         print(
-            "AirPoint needs the Microsoft Visual C++ Redistributable.\n"
-            "Download it from: https://aka.ms/vs/17/release/vc_redist.x64.exe\n"
-            "Then restart AirPoint."
+            "AirPoint failed to load a required native library.\n"
+            f"Error: {exc}\n"
+            + (f"Details written to: {log_path}\n" if log_path else "")
+            + "If Visual C++ is already installed, check Windows Defender's\n"
+            "Protection history for quarantined AirPoint files and restore them.\n"
+            "Otherwise install: https://aka.ms/vs/17/release/vc_redist.x64.exe"
         )
 
 
@@ -210,7 +240,8 @@ def run_app():
         import main
     except (ImportError, OSError) as e:
         if _looks_like_native_load_failure(e):
-            _show_dll_error(e)
+            log_path = _write_dll_log(e)
+            _show_dll_error(e, log_path)
             raise SystemExit(1)
         raise
     # Override main's APP_DIR in case it was set differently
