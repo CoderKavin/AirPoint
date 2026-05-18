@@ -53,3 +53,32 @@ Clone the repo and install requirements:
 git clone https://github.com/coderkavin/airpoint.git
 cd airpoint
 pip install -r requirements.txt
+python main.py
+```
+
+Or download a prebuilt release from the [Releases page](https://github.com/coderkavin/airpoint/releases) — `AirPoint-Windows.zip` for Windows, `AirPoint.dmg` for macOS.
+
+---
+
+## 🪟 Windows: First-Run Troubleshooting
+
+The Windows build is not yet code-signed, so Windows treats it with suspicion on first run. These are all expected and safe to work around:
+
+**"Windows protected your PC" (SmartScreen)**
+Click **More info → Run anyway**. This happens because the app isn't signed yet.
+
+**"AirPoint needs the Microsoft Visual C++ Runtime"**
+Let the app install it, or install it yourself (64-bit, latest):
+<https://aka.ms/vs/17/release/vc_redist.x64.exe> — then **restart your PC**.
+
+**"AirPoint can't load required libraries" — even after installing VC++**
+This means Windows Defender **quarantined a file inside the `AirPoint\_internal` folder**. The `.exe` survives but the app is left incomplete. To fix it permanently on your machine:
+
+1. **Windows Security → Virus & threat protection → Manage settings → Exclusions** → add the folder you keep AirPoint in (e.g. your `Downloads` folder).
+2. **Protection history** (same screen) → **Restore** anything listed for AirPoint.
+3. **Delete the broken AirPoint folder**, then **re-extract `AirPoint-Windows.zip` fresh** into the excluded folder.
+4. Run `AirPoint.exe` again.
+
+> Always extract the **whole** zip and keep `AirPoint.exe` next to its `_internal` folder — the app will not run if they're separated.
+
+If startup still fails, AirPoint writes a `dll_error.log` next to the `.exe` — open an issue with its contents.
