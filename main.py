@@ -10,8 +10,11 @@ if FROZEN:
     import warnings
     warnings.filterwarnings("ignore")
 
-import cv2
+# MediaPipe MUST be imported before cv2: in a frozen (PyInstaller) build its
+# _framework_bindings native module fails to initialize if OpenCV's native
+# DLLs are loaded into the process first. See airpoint_entry.run_app().
 import mediapipe as mp
+import cv2
 import numpy as np
 import pyautogui
 import time
