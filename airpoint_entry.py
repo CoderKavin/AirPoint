@@ -237,6 +237,12 @@ def _looks_like_native_load_failure(exc):
 def run_app():
     """Launch the main AirPoint application."""
     try:
+        # Load MediaPipe into a still-clean process BEFORE `import main`
+        # (which pulls in OpenCV, PyQt5, etc.). In a frozen build MediaPipe's
+        # _framework_bindings native module fails with "DLL initialization
+        # routine failed" if OpenCV/Qt native DLLs load first. Importing it
+        # here first is the documented workaround.
+        import mediapipe  # noqa: F401
         import main
     except (ImportError, OSError) as e:
         if _looks_like_native_load_failure(e):
