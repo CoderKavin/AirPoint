@@ -36,7 +36,7 @@ MAC_ASSET_NAME = "AirPoint.dmg"
 WIN_ASSET_NAME = "AirPoint-Windows.zip"
 
 # User data that must NEVER be overwritten by an update.
-PROTECTED_DIRS = {"profiles", "venv", "__pycache__", ".git", ".claude"}
+PROTECTED_DIRS = {"profiles", "venv", "__pycache__", ".git"}
 PROTECTED_FILES = {".gitignore", "crash.log", ".vc_installed"}
 
 
