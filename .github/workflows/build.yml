@@ -122,6 +122,27 @@ jobs:
           files-folder-filter: exe,dll,pyd
           files-folder-recurse: true
 
+      # Wrap the (signed, if configured) folder build into a single installer.
+      # AirPoint-Setup.exe installs to a dedicated per-user folder with shortcuts,
+      # so AirPoint.exe always stays next to _internal — this is what fixes the
+      # "Failed to load Python DLL" error caused by running the loose exe.
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
+
+      - name: Build Windows installer
+        shell: pwsh
+        run: |
+          $version = (Get-Content VERSION -Raw).Trim()
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$version" "installer.iss"
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit code $LASTEXITCODE" }
+          Get-ChildItem installer_out
+
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: AirPoint-Setup
+          path: installer_out/AirPoint-Setup.exe
+
       - name: Upload Windows build
         uses: actions/upload-artifact@v4
         with:
@@ -261,13 +282,22 @@ jobs:
         with:
           name: AirPoint-macOS
 
+      - name: Download Windows installer
+        uses: actions/download-artifact@v4
+        with:
+          name: AirPoint-Setup
+          path: .
+
       - name: Zip Windows build
         run: cd AirPoint-Windows && zip -r ../AirPoint-Windows.zip .
 
+      # AirPoint-Setup.exe is the primary Windows download (the website links to
+      # it). AirPoint-Windows.zip stays for the in-app auto-updater and power users.
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
+            AirPoint-Setup.exe
             AirPoint-Windows.zip
             AirPoint.dmg
           generate_release_notes: true

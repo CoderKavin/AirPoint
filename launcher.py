@@ -37,7 +37,10 @@ WIN_ASSET_NAME = "AirPoint-Windows.zip"
 
 # User data that must NEVER be overwritten by an update.
 PROTECTED_DIRS = {"profiles", "venv", "__pycache__", ".git"}
-PROTECTED_FILES = {".gitignore", "crash.log", ".vc_installed"}
+# unins000.* are the Inno Setup uninstaller; keep them across auto-updates so
+# "Uninstall" via Add/Remove Programs keeps working after an in-app update.
+PROTECTED_FILES = {".gitignore", "crash.log", ".vc_installed",
+                   "unins000.exe", "unins000.dat"}
 
 
 # ---------- Version helpers ----------
