@@ -32,14 +32,14 @@ elif platform.system() == 'Windows' and os.path.exists(_ICON_WIN):
 else:
     APP_ICON = None
 
-# --- Windows: ship a COMPLETE Microsoft Visual C++ runtime ----------------
-# PyInstaller auto-bundles vcruntime140.dll but treats msvcp140.dll,
-# msvcp140_1.dll and concrt140.dll as OS-provided "system" DLLs and omits
-# them. OpenCV (cv2) and MediaPipe's opencv_world3410.dll are C++ and need
-# msvcp140/concrt140, so on a machine WITHOUT the VC++ Redistributable
-# installed they fail to load with:
-#   "DLL load failed: The specified module could not be found".
-# Bundling them into _internal makes the app self-contained (no redist needed).
+# --- Windows: ship the Microsoft Visual C++ runtime NEXT TO each consumer --
+# PyInstaller omits msvcp140.dll/msvcp140_1.dll/concrt140.dll, treating them as
+# OS-provided "system" DLLs. OpenCV (cv2) and MediaPipe's opencv_world3410.dll
+# are C++ and need them. Crucially, Windows resolves a DLL's imports from the
+# IMPORTING DLL's own directory — NOT from _internal root — so the runtime must
+# sit in the SAME folder as each consumer. That is exactly how PyQt5 ships its
+# own copies (PyQt5/Qt5/bin), which is why PyQt5 loads but cv2/mediapipe did
+# not when the runtime was only in _internal root. Place a copy next to each.
 vcredist_binaries = []
 if platform.system() == 'Windows':
     _sys32 = os.path.join(os.environ.get('SystemRoot', r'C:\Windows'), 'System32')
@@ -47,10 +47,13 @@ if platform.system() == 'Windows':
         'msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll', 'concrt140.dll',
     ]
     _optional_crt = ['msvcp140_1.dll', 'msvcp140_2.dll']
+    # _internal root (for python310.dll) + next to the cv2 and mediapipe C++ DLLs.
+    _crt_dests = ['.', 'cv2', os.path.join('mediapipe', 'python')]
     for _dll in _required_crt + _optional_crt:
         _src = os.path.join(_sys32, _dll)
         if os.path.exists(_src):
-            vcredist_binaries.append((_src, '.'))
+            for _dest in _crt_dests:
+                vcredist_binaries.append((_src, _dest))
         elif _dll in _required_crt:
             raise SystemExit(
                 f"AirPoint.spec: required VC++ runtime '{_dll}' not found in "

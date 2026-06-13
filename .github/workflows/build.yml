@@ -92,16 +92,20 @@ jobs:
         run: |
           internal="dist/AirPoint/_internal"
           missing=0
+          check() { if [ -f "$internal/$1" ]; then echo "ok: $1"; else echo "::error::missing $internal/$1"; missing=1; fi; }
+          # Python runtime in _internal root.
           for dll in python310.dll msvcp140.dll vcruntime140.dll vcruntime140_1.dll concrt140.dll; do
-            if [ -f "$internal/$dll" ]; then
-              echo "ok: $dll"
-            else
-              echo "::error::missing required runtime DLL: $internal/$dll"
-              missing=1
-            fi
+            check "$dll"
+          done
+          # C++ runtime MUST sit next to the cv2 / mediapipe consumers, because
+          # Windows resolves a DLL's imports from the importing DLL's own folder.
+          for dir in cv2 mediapipe/python; do
+            for dll in msvcp140.dll concrt140.dll vcruntime140.dll vcruntime140_1.dll; do
+              check "$dir/$dll"
+            done
           done
           if [ "$missing" = "1" ]; then
-            echo "Incomplete C++ runtime — see vcredist_binaries in AirPoint.spec"
+            echo "Incomplete/misplaced C++ runtime — see vcredist_binaries in AirPoint.spec"
             exit 1
           fi
 
