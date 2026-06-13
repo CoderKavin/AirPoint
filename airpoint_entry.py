@@ -47,6 +47,17 @@ if getattr(sys, 'frozen', False):
 else:
     APP_DIR = os.path.dirname(os.path.abspath(__file__))
 
+# BUNDLE_DIR = where PyInstaller unpacked bundled data (VERSION, main.py, …).
+# In a frozen build this is the _internal folder (sys._MEIPASS), NOT the folder
+# that holds the .exe. VERSION ships INSIDE the bundle, so it must be read from
+# here. Reading it from APP_DIR (next to the exe) finds nothing, which makes the
+# updater believe the installed version is 0.0.0 and prompt to "update" on every
+# single launch — the bug behind the endless update loop.
+if getattr(sys, 'frozen', False):
+    BUNDLE_DIR = sys._MEIPASS
+else:
+    BUNDLE_DIR = APP_DIR
+
 # Ensure profiles dir exists
 os.makedirs(os.path.join(APP_DIR, "profiles"), exist_ok=True)
 
@@ -65,7 +76,8 @@ def run_updater():
         # (matters for the .app bundle on macOS, where APP_DIR is the folder
         # CONTAINING AirPoint.app, not the bundle internals).
         launcher.APP_DIR = APP_DIR
-        launcher.VERSION_FILE = os.path.join(APP_DIR, "VERSION")
+        # VERSION lives inside the bundle (_internal), not next to the exe.
+        launcher.VERSION_FILE = os.path.join(BUNDLE_DIR, "VERSION")
         launcher.CRASH_LOG = os.path.join(APP_DIR, "crash.log")
 
         if launcher.perform_update_check():

@@ -264,12 +264,18 @@ def _apply_update_windows(zip_path):
 
     swap_bat = os.path.join(tempfile.gettempdir(), "airpoint_swap.bat")
     with open(swap_bat, "w") as f:
-        # /B = no new window, /D = working dir, timeout waits for parent exit.
+        # Wait for the parent to exit, then MIRROR the new build over the install
+        # in place with robocopy. The old approach (rmdir the install dir, then
+        # move the new one in) deleted the install FIRST, so any failure of the
+        # move — a locked file, or %TEMP% on a different volume — left the folder
+        # gone and produced "The system cannot find the path specified", wrecking
+        # the install. robocopy /MIR updates in place and retries locked files;
+        # protected user data was already copied into {source}, so /MIR keeps it.
         f.write(
             "@echo off\r\n"
             "timeout /t 3 /nobreak >nul\r\n"
-            f'rmdir /s /q "{install_dir}"\r\n'
-            f'move "{source}" "{install_dir}" >nul\r\n'
+            f'robocopy "{source}" "{install_dir}" /MIR /R:5 /W:2 '
+            "/NFL /NDL /NJH /NJS /NP >nul\r\n"
             f'start "" "{exe_path}"\r\n'
             f'rmdir /s /q "{new_dir}" 2>nul\r\n'
             'del "%~f0"\r\n'
