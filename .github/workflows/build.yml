@@ -83,6 +83,28 @@ jobs:
       - name: Build with PyInstaller
         run: pyinstaller AirPoint.spec --noconfirm
 
+      # Self-contained-runtime guard. The frozen app must carry a COMPLETE VC++
+      # runtime — without msvcp140.dll/concrt140.dll, OpenCV and MediaPipe fail
+      # on any machine that lacks the VC++ Redistributable. Fail the build here
+      # (where it's visible) rather than shipping a bundle that crashes on users.
+      - name: Verify bundled C++ runtime is complete
+        shell: bash
+        run: |
+          internal="dist/AirPoint/_internal"
+          missing=0
+          for dll in python310.dll msvcp140.dll vcruntime140.dll vcruntime140_1.dll concrt140.dll; do
+            if [ -f "$internal/$dll" ]; then
+              echo "ok: $dll"
+            else
+              echo "::error::missing required runtime DLL: $internal/$dll"
+              missing=1
+            fi
+          done
+          if [ "$missing" = "1" ]; then
+            echo "Incomplete C++ runtime — see vcredist_binaries in AirPoint.spec"
+            exit 1
+          fi
+
       # Sign the .exe AND every bundled .dll/.pyd. Signing the whole folder is
       # what stops Windows Defender from quarantining individual files inside
       # _internal. Skipped automatically if the Azure secrets aren't set.

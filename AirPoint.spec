@@ -32,10 +32,36 @@ elif platform.system() == 'Windows' and os.path.exists(_ICON_WIN):
 else:
     APP_ICON = None
 
+# --- Windows: ship a COMPLETE Microsoft Visual C++ runtime ----------------
+# PyInstaller auto-bundles vcruntime140.dll but treats msvcp140.dll,
+# msvcp140_1.dll and concrt140.dll as OS-provided "system" DLLs and omits
+# them. OpenCV (cv2) and MediaPipe's opencv_world3410.dll are C++ and need
+# msvcp140/concrt140, so on a machine WITHOUT the VC++ Redistributable
+# installed they fail to load with:
+#   "DLL load failed: The specified module could not be found".
+# Bundling them into _internal makes the app self-contained (no redist needed).
+vcredist_binaries = []
+if platform.system() == 'Windows':
+    _sys32 = os.path.join(os.environ.get('SystemRoot', r'C:\Windows'), 'System32')
+    _required_crt = [
+        'msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll', 'concrt140.dll',
+    ]
+    _optional_crt = ['msvcp140_1.dll', 'msvcp140_2.dll']
+    for _dll in _required_crt + _optional_crt:
+        _src = os.path.join(_sys32, _dll)
+        if os.path.exists(_src):
+            vcredist_binaries.append((_src, '.'))
+        elif _dll in _required_crt:
+            raise SystemExit(
+                f"AirPoint.spec: required VC++ runtime '{_dll}' not found in "
+                f"{_sys32}. Install the Visual C++ Redistributable on the build "
+                f"machine so the frozen app can bundle it."
+            )
+
 a = Analysis(
     [os.path.join(PROJECT_DIR, 'airpoint_entry.py')],
     pathex=[PROJECT_DIR],
-    binaries=mediapipe_binaries + cv2_binaries + protobuf_binaries,
+    binaries=mediapipe_binaries + cv2_binaries + protobuf_binaries + vcredist_binaries,
     datas=[
         # App files
         (os.path.join(PROJECT_DIR, 'main.py'), '.'),
