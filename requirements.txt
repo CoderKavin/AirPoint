@@ -1,4 +1,10 @@
-mediapipe==0.10.21
+# mediapipe 0.10.18–0.10.22 have a Windows regression where _framework_bindings
+# fails to import with "A dynamic link library (DLL) initialization routine
+# failed" in frozen/PyInstaller builds (google-ai-edge/mediapipe issue #5838).
+# 0.10.14 is the last release with the legacy mp.solutions API (used in main.py)
+# that is NOT affected. Do NOT bump into 0.10.18–0.10.22. 0.10.30+ fixes the bug
+# but REMOVES mp.solutions, which would require rewriting main.py to the Tasks API.
+mediapipe==0.10.14
 numpy==1.26.4
 opencv-contrib-python==4.11.0.86
 pyautogui==0.9.54
