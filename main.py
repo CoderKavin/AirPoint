@@ -56,8 +56,9 @@ from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
                               QLabel, QPushButton, QLineEdit, QListWidget,
                               QStackedWidget, QProgressBar, QSizePolicy,
                               QCheckBox, QSlider, QInputDialog, QMessageBox,
-                              QListWidgetItem, QComboBox)
-from PyQt5.QtCore import Qt, QTimer, QEventLoop, pyqtSignal, QPoint
+                              QListWidgetItem, QComboBox, QFrame, QAbstractButton,
+                              QGridLayout, QScrollArea)
+from PyQt5.QtCore import Qt, QTimer, QEventLoop, pyqtSignal, QPoint, QSize
 from PyQt5.QtGui import QImage, QPixmap, QFont, QPainter, QColor, QPen
 
 # APP_DIR: when frozen, use the folder containing the exe, not the temp bundle dir
@@ -689,6 +690,7 @@ _LIGHT = {
     "drag": "#B23A86", "drag_soft": "#FAE5F2",
     "scroll": "#2E5BD0", "scroll_soft": "#E4ECFF",
     "slider_handle": "#FFFFFF", "camera_bg": "#0C0C0E", "focus": "#0A6FF0",
+    "switch_off": "#D1D1D6", "sidebar_bg": "#E4E4E9",
 }
 _DARK = {
     "bg": "#1E1E22", "card": "#26262C", "surface": "#2A2A31",
@@ -703,6 +705,7 @@ _DARK = {
     "drag": "#FF88CC", "drag_soft": "#3A1A30",
     "scroll": "#88AAFF", "scroll_soft": "#1A2A3D",
     "slider_handle": "#F2F2F5", "camera_bg": "#0C0C0E", "focus": "#2ADDFF",
+    "switch_off": "#48484E", "sidebar_bg": "#252529",
 }
 
 
@@ -764,7 +767,10 @@ def _theme_html(s):
 
 def _build_base_qss(t):
     return f"""
-QWidget {{ background-color: {t.bg}; color: {t.text}; }}
+/* Top-level windows get their background from the palette (Window = bg), set in
+   apply_app_theme. Leaving child QWidgets without a forced background keeps them
+   transparent so grouped "cards" show through correctly. */
+QWidget {{ color: {t.text}; }}
 QLabel {{ background: transparent; }}
 QPushButton {{
     background-color: {t.accent}; color: {t.on_accent}; border: none;
@@ -870,6 +876,115 @@ def apply_app_theme(app):
     app.setPalette(pal)
     app.setFont(_font(10))
     app.setStyleSheet(BASE_QSS)
+
+
+# ---------------------------------------------------------------------------
+# Reusable Apple-style UI components
+#
+# These give the panels a modern macOS feel (the same on Windows): a painted
+# toggle switch, inset-grouped rounded "cards", small section headers, and
+# label/control rows — the building blocks of macOS System Settings.
+# ---------------------------------------------------------------------------
+
+class Switch(QAbstractButton):
+    """A painted macOS-style toggle switch (checkable)."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setCheckable(True)
+        self.setCursor(Qt.PointingHandCursor)
+        self._w, self._h = 42, 25
+        self.setFixedSize(self._w, self._h)
+
+    def sizeHint(self):
+        return QSize(self._w, self._h)
+
+    def paintEvent(self, _event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        on = self.isChecked()
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(T.accent) if on else QColor(T.switch_off))
+        p.drawRoundedRect(0, 0, self._w, self._h, self._h / 2, self._h / 2)
+        d = self._h - 6
+        x = (self._w - d - 3) if on else 3
+        p.setBrush(QColor("#FFFFFF"))
+        p.drawEllipse(int(x), 3, int(d), int(d))
+
+
+class NoScrollSlider(QSlider):
+    """A slider that ignores the mouse wheel — it only changes by click+drag,
+    so scrolling the page over a slider never nudges its value."""
+
+    def wheelEvent(self, event):
+        event.ignore()  # let the parent scroll area handle the wheel instead
+
+
+class NoScrollComboBox(QComboBox):
+    """A combo box that ignores the mouse wheel (same reason as the slider)."""
+
+    def wheelEvent(self, event):
+        event.ignore()
+
+
+class Card(QFrame):
+    """A rounded, hairline-bordered grouped container (macOS inset-grouped)."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("card")
+        self.setStyleSheet(
+            f"#card {{ background-color: {T.card}; border: 1px solid {T.border};"
+            f" border-radius: 12px; }}")
+        self._v = QVBoxLayout(self)
+        self._v.setContentsMargins(0, 0, 0, 0)
+        self._v.setSpacing(0)
+
+    def add_row(self, widget):
+        """Append a row, inserting a hairline separator before it if needed."""
+        if self._v.count() > 0:
+            line = QFrame()
+            line.setFixedHeight(1)
+            line.setStyleSheet(f"background-color: {T.border}; border: none;")
+            self._v.addWidget(line)
+        self._v.addWidget(widget)
+
+    def add_widget(self, widget):
+        """Append a widget with no separator (e.g. a control group)."""
+        self._v.addWidget(widget)
+
+
+def section_label(text):
+    """Small dim section header shown above a card."""
+    lbl = QLabel(text)
+    lbl.setFont(_font(11, QFont.DemiBold))
+    lbl.setStyleSheet(f"color: {T.text_dim}; padding-left: 4px;")
+    return lbl
+
+
+def make_row(title, control=None, height=46):
+    """A card row: title on the left, an optional control on the right."""
+    row = QWidget()
+    row.setMinimumHeight(height)
+    h = QHBoxLayout(row)
+    h.setContentsMargins(14, 8, 12, 8)
+    h.setSpacing(10)
+    lbl = QLabel(title)
+    lbl.setFont(_font(13))
+    lbl.setWordWrap(True)
+    lbl.setStyleSheet(f"color: {T.text};")
+    h.addWidget(lbl, 1)
+    if control is not None:
+        h.addWidget(control, 0, Qt.AlignRight | Qt.AlignVCenter)
+    return row
+
+
+def _split_toggle(s):
+    """Pull a concise title out of the legacy two-line toggle strings, e.g.
+    '  Pause when not looking  —  ON\\n  ...'  ->  'Pause when not looking'.
+    Reuses the existing translations so no new i18n keys are needed."""
+    first = s.partition("\n")[0]
+    return first.split("—")[0].strip()
 
 
 class CameraWidget(QLabel):
@@ -1338,9 +1453,13 @@ class SetupWizard(QWidget):
 
         vbox.addSpacing(8)
 
-        # Quick reference card
+        # Quick reference card (objectName-scoped so the border/background don't
+        # cascade onto the child labels inside it).
         card = QWidget()
-        card.setStyleSheet(f"background-color: {T.card}; border: 1px solid {T.border}; border-radius: 10px; padding: 12px;")
+        card.setObjectName("doneCard")
+        card.setStyleSheet(
+            f"#doneCard {{ background-color: {T.card}; border: 1px solid {T.border};"
+            f" border-radius: 10px; }}")
         card_vbox = QVBoxLayout(card)
         card_vbox.setContentsMargins(14, 10, 14, 10)
         card_vbox.setSpacing(6)
@@ -1781,119 +1900,96 @@ class SetupWizard(QWidget):
 class StatusPanel(QWidget):
     """User-friendly control panel shown during tracking."""
 
-    TOGGLE_ON = f"""
-        QPushButton {{ background-color: {T.accent_soft}; color: {T.accent}; border: 1px solid {T.accent};
-                      border-radius: 12px; padding: 12px; text-align: left; font-size: 14px; font-weight: 600; }}
-        QPushButton:hover {{ background-color: {T.accent_soft_hover}; }}
-    """
-    TOGGLE_OFF = f"""
-        QPushButton {{ background-color: {T.surface}; color: {T.text_dim}; border: 1px solid {T.border};
-                      border-radius: 12px; padding: 12px; text-align: left; font-size: 14px; font-weight: 500; }}
-        QPushButton:hover {{ background-color: {T.surface_hover}; }}
-    """
-
     def __init__(self, controller):
         super().__init__()
         self.controller = controller
+        self._syncing = False
         self.setWindowTitle("AirPoint")
-        self.setFixedSize(360, 660)
+        self.setFixedWidth(360)
         self.setStyleSheet(BASE_QSS + f" StatusPanel {{ background-color: {T.bg}; }}")
         self.setWindowFlags(Qt.WindowStaysOnTopHint | Qt.Tool)
 
-        vbox = QVBoxLayout(self)
-        vbox.setContentsMargins(24, 20, 24, 18)
-        vbox.setSpacing(0)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(20, 18, 20, 18)
+        root.setSpacing(14)
 
-        # ---- Header + status badge ----
-        header = QLabel("AirPoint")
-        header.setFont(_font(20, QFont.Bold))
-        header.setAlignment(Qt.AlignCenter)
-        header.setStyleSheet(f"color: {T.accent};")
-        vbox.addWidget(header)
-
+        # ---- Header ----
+        head = QHBoxLayout()
+        head.setSpacing(8)
+        brand = QLabel("AirPoint")
+        brand.setFont(_font(17, QFont.DemiBold))
+        brand.setStyleSheet(f"color: {T.text};")
+        head.addWidget(brand)
+        head.addStretch(1)
         self.profile_label = QLabel()
-        self.profile_label.setFont(_font(11))
-        self.profile_label.setAlignment(Qt.AlignCenter)
+        self.profile_label.setFont(_font(12))
         self.profile_label.setStyleSheet(f"color: {T.text_dim};")
-        vbox.addWidget(self.profile_label)
+        head.addWidget(self.profile_label)
+        root.addLayout(head)
 
-        vbox.addSpacing(10)
-
-        # Big status indicator
+        # ---- Status pill ----
         self.status_badge = QLabel(S("panel_looking"))
-        self.status_badge.setFont(_font(15, QFont.Bold))
+        self.status_badge.setFont(_font(13, QFont.DemiBold))
         self.status_badge.setAlignment(Qt.AlignCenter)
-        self.status_badge.setFixedHeight(50)
-        self.status_badge.setStyleSheet(
-            f"background-color: {T.surface}; color: {T.text_dim};"
-            f" border: 1px solid {T.border}; border-radius: 12px; padding: 8px;")
-        vbox.addWidget(self.status_badge)
+        self.status_badge.setFixedHeight(44)
+        self._set_badge(T.surface, T.text_dim, border=T.border)
+        root.addWidget(self.status_badge)
 
-        vbox.addSpacing(12)
+        # ---- Controls (grouped switch rows) ----
+        card = Card()
+        self.pause_switch = Switch()
+        self.gaze_switch = Switch()
+        self.dwell_switch = Switch()
+        card.add_row(make_row("Pause tracking", self.pause_switch))
+        card.add_row(make_row(_split_toggle(S("panel_gaze_on")), self.gaze_switch))
+        card.add_row(make_row(_split_toggle(S("panel_dwell_on")), self.dwell_switch))
+        root.addWidget(card)
+        self.pause_switch.toggled.connect(self._on_pause_switch)
+        self.gaze_switch.toggled.connect(self._on_gaze_switch)
+        self.dwell_switch.toggled.connect(self._on_dwell_switch)
 
-        # ---- Pause / resume (park the cursor) ----
-        self.pause_btn = QPushButton()
-        self.pause_btn.setCursor(Qt.PointingHandCursor)
-        self.pause_btn.setFixedHeight(48)
-        self.pause_btn.clicked.connect(self._toggle_pause)
-        vbox.addWidget(self.pause_btn)
-
-        vbox.addSpacing(10)
-
-        # ---- Toggle buttons ----
-        self.gaze_btn = QPushButton()
-        self.gaze_btn.setCursor(Qt.PointingHandCursor)
-        self.gaze_btn.setFixedHeight(52)
-        self.gaze_btn.clicked.connect(self._toggle_gaze)
-        vbox.addWidget(self.gaze_btn)
-
-        vbox.addSpacing(8)
-
-        self.dwell_btn = QPushButton()
-        self.dwell_btn.setCursor(Qt.PointingHandCursor)
-        self.dwell_btn.setFixedHeight(52)
-        self.dwell_btn.clicked.connect(self._toggle_dwell)
-        vbox.addWidget(self.dwell_btn)
-
-        vbox.addStretch(1)
-
-        # ---- Settings / Profiles row ----
+        # ---- Settings / Profiles ----
         tools_row = QHBoxLayout()
+        tools_row.setSpacing(10)
         self.settings_btn = QPushButton("Settings")
         self.settings_btn.setObjectName("secondary")
         self.settings_btn.setCursor(Qt.PointingHandCursor)
-        self.settings_btn.setFixedHeight(44)
+        self.settings_btn.setFixedHeight(38)
         self.settings_btn.clicked.connect(self._open_settings)
         self.profiles_btn = QPushButton("Profiles")
         self.profiles_btn.setObjectName("secondary")
         self.profiles_btn.setCursor(Qt.PointingHandCursor)
-        self.profiles_btn.setFixedHeight(44)
+        self.profiles_btn.setFixedHeight(38)
         self.profiles_btn.clicked.connect(self._open_profiles)
         tools_row.addWidget(self.settings_btn)
         tools_row.addWidget(self.profiles_btn)
-        vbox.addLayout(tools_row)
-
-        vbox.addSpacing(8)
+        root.addLayout(tools_row)
 
         # ---- Bottom actions ----
         self.recal_btn = QPushButton(S("panel_redo"))
         self.recal_btn.setObjectName("secondary")
         self.recal_btn.setCursor(Qt.PointingHandCursor)
-        self.recal_btn.setFixedHeight(44)
-        vbox.addWidget(self.recal_btn)
-
-        vbox.addSpacing(8)
+        self.recal_btn.setFixedHeight(38)
+        root.addWidget(self.recal_btn)
 
         self.quit_btn = QPushButton(S("panel_stop"))
         self.quit_btn.setObjectName("danger")
         self.quit_btn.setCursor(Qt.PointingHandCursor)
-        self.quit_btn.setFixedHeight(44)
-        vbox.addWidget(self.quit_btn)
+        self.quit_btn.setFixedHeight(38)
+        root.addWidget(self.quit_btn)
 
         # Timer for updating status
         self.timer = QTimer()
         self.timer.setInterval(200)
         self.timer.timeout.connect(self._update_status)
+
+    def showEvent(self, event):
+        # Size the window to its content once laid out (so wrapped row titles
+        # are measured at the real width) — no dead space, no clipping.
+        super().showEvent(event)
+        if not getattr(self, "_height_fixed", False):
+            self._height_fixed = True
+            self.setFixedHeight(self.sizeHint().height())
 
     def _toggle_gaze(self):
         self.controller.toggle_gaze_detection()
@@ -1907,23 +2003,40 @@ class StatusPanel(QWidget):
         self.controller.toggle_dwell_click()
         self._update_status()
 
+    def _on_pause_switch(self, checked):
+        if self._syncing:
+            return
+        if checked != bool(getattr(self.controller, 'paused', False)):
+            self.controller.toggle_pause()
+        self._update_status()
+
+    def _on_gaze_switch(self, checked):
+        if self._syncing:
+            return
+        if checked != bool(self.controller.gaze_detection_enabled):
+            self.controller.toggle_gaze_detection()
+        self._update_status()
+
+    def _on_dwell_switch(self, checked):
+        if self._syncing:
+            return
+        if checked != bool(self.controller.dwell_click_enabled):
+            self.controller.toggle_dwell_click()
+        self._update_status()
+
     def _open_settings(self):
-        if getattr(self, 'settings_panel', None) is None:
-            self.settings_panel = SettingsPanel(self.controller)
-        else:
-            self.settings_panel._sync_from_controller()
-        self.settings_panel.show()
-        self.settings_panel.raise_()
-        self.settings_panel.activateWindow()
+        self._open_control('settings')
 
     def _open_profiles(self):
-        if getattr(self, 'profiles_panel', None) is None:
-            self.profiles_panel = ProfilesPanel(self.controller)
-        else:
-            self.profiles_panel._refresh()
-        self.profiles_panel.show()
-        self.profiles_panel.raise_()
-        self.profiles_panel.activateWindow()
+        self._open_control('profiles')
+
+    def _open_control(self, page):
+        if getattr(self, 'control_center', None) is None:
+            self.control_center = ControlCenter(self.controller)
+        self.control_center.show_page(page)
+        self.control_center.show()
+        self.control_center.raise_()
+        self.control_center.activateWindow()
 
     def start(self):
         self._update_status()
@@ -1938,15 +2051,14 @@ class StatusPanel(QWidget):
         c = self.controller
         self.profile_label.setText(S("panel_hi", name=c.profile_name or "User"))
 
-        # -- Pause button --
-        if getattr(c, 'paused', False):
-            self.pause_btn.setText("Resume tracking")
-            self.pause_btn.setStyleSheet(self.TOGGLE_ON)
-        else:
-            self.pause_btn.setText("Pause tracking")
-            self.pause_btn.setStyleSheet(self.TOGGLE_OFF)
+        # -- Sync switches to controller state (without firing their handlers) --
+        self._syncing = True
+        self.pause_switch.setChecked(bool(getattr(c, 'paused', False)))
+        self.gaze_switch.setChecked(bool(c.gaze_detection_enabled))
+        self.dwell_switch.setChecked(bool(c.dwell_click_enabled))
+        self._syncing = False
 
-        # -- Status badge --
+        # -- Status pill --
         gesture = getattr(c, '_last_gesture', 'no_hand')
         if getattr(c, 'paused', False):
             self.status_badge.setText("Paused")
@@ -1979,22 +2091,6 @@ class StatusPanel(QWidget):
                 bg, fg = T.warn_soft, T.warn
             self._set_badge(bg, fg)
 
-        # -- Gaze toggle --
-        if c.gaze_detection_enabled:
-            self.gaze_btn.setText(S("panel_gaze_on"))
-            self.gaze_btn.setStyleSheet(self.TOGGLE_ON)
-        else:
-            self.gaze_btn.setText(S("panel_gaze_off"))
-            self.gaze_btn.setStyleSheet(self.TOGGLE_OFF)
-
-        # -- Dwell toggle --
-        if c.dwell_click_enabled:
-            self.dwell_btn.setText(S("panel_dwell_on"))
-            self.dwell_btn.setStyleSheet(self.TOGGLE_ON)
-        else:
-            self.dwell_btn.setText(S("panel_dwell_off"))
-            self.dwell_btn.setStyleSheet(self.TOGGLE_OFF)
-
     def keyPressEvent(self, event):
         key = event.key()
         if key == Qt.Key_G:
@@ -2008,10 +2104,9 @@ class StatusPanel(QWidget):
 
     def closeEvent(self, event):
         self.timer.stop()
-        for attr in ('settings_panel', 'profiles_panel'):
-            p = getattr(self, attr, None)
-            if p is not None:
-                p.close()
+        cc = getattr(self, 'control_center', None)
+        if cc is not None:
+            cc.close()
         # Closing the panel by ANY means (incl. the OS X-button) must stop the
         # tracking loop — otherwise the cursor keeps moving with no UI to stop it.
         cb = getattr(self, '_on_close_quit', None)
@@ -2046,27 +2141,40 @@ class SettingsPanel(QWidget):
         super().__init__(parent)
         self.controller = controller
         self._loading = False
-        self.setWindowTitle("AirPoint Settings")
-        # Fixed width, content-driven height so Save/Reset can never be clipped
-        # off the bottom under HiDPI / large-font scaling.
-        self.setFixedWidth(400)
-        self.setMinimumHeight(560)
-        self.setStyleSheet(BASE_QSS + f" SettingsPanel {{ background-color: {T.bg}; }}")
-        self.setWindowFlags(Qt.WindowStaysOnTopHint | Qt.Tool)
+        # Embedded as a page inside ControlCenter (no window chrome of its own).
 
-        v = QVBoxLayout(self)
-        v.setContentsMargins(22, 18, 22, 16)
-        v.setSpacing(7)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
 
         header = QLabel("Settings")
-        header.setFont(_font(18, QFont.Bold))
-        header.setStyleSheet(f"color: {T.accent};")
-        v.addWidget(header)
+        header.setFont(_font(20, QFont.Bold))
+        header.setStyleSheet(f"color: {T.text}; padding: 18px 24px 6px 24px;")
+        outer.addWidget(header)
 
-        # ---- Pointer-feel presets ----
-        v.addWidget(self._caption("Pointer feel"))
-        preset_row = QHBoxLayout()
-        preset_row.setSpacing(6)
+        # Scrollable body so content can never clip (HiDPI / long translations).
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        outer.addWidget(scroll, 1)
+
+        content = QWidget()
+        content.setObjectName("scrollcontent")
+        content.setStyleSheet(f"#scrollcontent {{ background-color: {T.bg}; }}")
+        scroll.setWidget(content)
+        v = QVBoxLayout(content)
+        v.setContentsMargins(24, 8, 24, 18)
+        v.setSpacing(16)
+
+        # ---- Pointer-feel presets (one row across the wider window) ----
+        v.addWidget(section_label("POINTER FEEL"))
+        pcard = Card()
+        prow_holder = QWidget()
+        prow = QHBoxLayout(prow_holder)
+        prow.setContentsMargins(12, 12, 12, 10)
+        prow.setSpacing(8)
         self.preset_btns = {}
         for key, label in PRESET_LABELS:
             b = QPushButton(label)
@@ -2074,67 +2182,97 @@ class SettingsPanel(QWidget):
             b.setFixedHeight(34)
             b.clicked.connect(lambda _=False, k=key: self._on_preset(k))
             self.preset_btns[key] = b
-            preset_row.addWidget(b)
-        v.addLayout(preset_row)
+            prow.addWidget(b, 1)
+        pcard.add_widget(prow_holder)
         self.custom_lbl = QLabel("")
         self.custom_lbl.setAlignment(Qt.AlignCenter)
-        self.custom_lbl.setStyleSheet(f"color:{T.text_dim}; font-size:11px;")
-        v.addWidget(self.custom_lbl)
+        self.custom_lbl.setStyleSheet(f"color: {T.text_dim}; font-size: 11px; padding: 0 0 10px 0;")
+        pcard.add_widget(self.custom_lbl)
+        v.addWidget(pcard)
 
-        # ---- Fine sliders ----
+        # ---- Fine sliders (grouped card) ----
+        v.addWidget(section_label("POINTER"))
+        scard = Card()
         self.sliders = {}  # attr -> (slider, value_label, scale, is_int, fmt)
         for caption, attr, lo, hi, step, scale, is_int, fmt in self.SLIDERS:
-            v.addWidget(self._caption(caption))
-            row = QHBoxLayout()
-            sl = QSlider(Qt.Horizontal)
+            rw = QWidget()
+            rv = QVBoxLayout(rw)
+            rv.setContentsMargins(14, 10, 14, 10)
+            rv.setSpacing(7)
+            top = QHBoxLayout()
+            top.setSpacing(8)
+            cap = QLabel(caption)
+            cap.setFont(_font(13))
+            cap.setStyleSheet(f"color: {T.text};")
+            val = QLabel("")
+            val.setFont(_font(12, QFont.DemiBold))
+            val.setStyleSheet(f"color: {T.accent};")
+            val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            top.addWidget(cap)
+            top.addStretch(1)
+            top.addWidget(val)
+            rv.addLayout(top)
+            sl = NoScrollSlider(Qt.Horizontal)
             sl.setMinimum(int(round(lo * scale)))
             sl.setMaximum(int(round(hi * scale)))
             sl.setSingleStep(max(1, int(round(step * scale))))
             sl.setPageStep(max(1, int(round(step * scale))))
             sl.setCursor(Qt.PointingHandCursor)
-            val = QLabel("")
-            val.setFixedWidth(56)
-            val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            val.setStyleSheet(f"color:{T.accent}; font-size:12px;")
             sl.valueChanged.connect(lambda raw, a=attr: self._on_slider(a, raw))
-            row.addWidget(sl)
-            row.addWidget(val)
-            v.addLayout(row)
+            rv.addWidget(sl)
+            scard.add_row(rw)
             self.sliders[attr] = (sl, val, scale, is_int, fmt)
+        v.addWidget(scard)
 
-        self.dwell_cb = QCheckBox("Auto-click by hovering (dwell)")
+        # ---- Clicking (switch rows) ----
+        v.addWidget(section_label("CLICKING"))
+        ccard = Card()
+        self.dwell_cb = Switch()
+        self.feedback_cb = Switch()
+        ccard.add_row(make_row("Auto-click by hovering", self.dwell_cb))
+        ccard.add_row(make_row("Show a ring when I click", self.feedback_cb))
+        v.addWidget(ccard)
         self.dwell_cb.toggled.connect(self._on_dwell_toggle)
-        v.addWidget(self.dwell_cb)
-
-        self.feedback_cb = QCheckBox("Show a ring when I click")
         self.feedback_cb.toggled.connect(self._on_feedback_toggle)
-        v.addWidget(self.feedback_cb)
 
-        # ---- Gesture actions (remap the click gestures) ----
-        v.addWidget(self._caption("Pinch does"))
+        # ---- Gestures (remap the click gestures) ----
+        v.addWidget(section_label("GESTURES"))
+        gcard = Card()
         self.pinch_combo = self._make_action_combo("pinch")
-        v.addWidget(self.pinch_combo)
-        v.addWidget(self._caption("Fist does"))
         self.fist_combo = self._make_action_combo("fist")
-        v.addWidget(self.fist_combo)
+        self.pinch_combo.setMinimumWidth(150)
+        self.fist_combo.setMinimumWidth(150)
+        gcard.add_row(make_row("Pinch does", self.pinch_combo))
+        gcard.add_row(make_row("Fist does", self.fist_combo))
+        v.addWidget(gcard)
 
         v.addStretch(1)
 
-        btn_row = QHBoxLayout()
+        # ---- Fixed footer (Reset / Save always visible) ----
+        sep = QFrame()
+        sep.setFixedHeight(1)
+        sep.setStyleSheet(f"background-color: {T.border}; border: none;")
+        outer.addWidget(sep)
+        footer = QWidget()
+        fl = QHBoxLayout(footer)
+        fl.setContentsMargins(20, 12, 20, 14)
+        fl.setSpacing(10)
         reset_btn = QPushButton("Reset to defaults")
         reset_btn.setObjectName("secondary")
         reset_btn.setCursor(Qt.PointingHandCursor)
+        reset_btn.setFixedHeight(38)
         reset_btn.clicked.connect(self._on_reset)
         self.save_btn = QPushButton("Save")
         self.save_btn.setCursor(Qt.PointingHandCursor)
+        self.save_btn.setFixedHeight(38)
         self.save_btn.clicked.connect(self._on_save)
-        btn_row.addWidget(reset_btn)
-        btn_row.addWidget(self.save_btn)
-        v.addLayout(btn_row)
+        fl.addWidget(reset_btn, 1)
+        fl.addWidget(self.save_btn, 1)
+        outer.addWidget(footer)
 
         self._sync_from_controller()
 
-        # Keep sliders/checkbox in sync if controller attrs change elsewhere
+        # Keep sliders/switches in sync if controller attrs change elsewhere
         # (preset applied from another path, dwell toggled on the status panel,
         # a live recalibration) while this panel stays open. The _loading guard
         # makes the programmatic setValue calls side-effect-free, and setValue to
@@ -2151,11 +2289,6 @@ class SettingsPanel(QWidget):
     def hideEvent(self, event):
         self._refresh_timer.stop()
         super().hideEvent(event)
-
-    def _caption(self, text):
-        lbl = QLabel(text)
-        lbl.setStyleSheet(f"color:{T.text2}; font-size:12px;")
-        return lbl
 
     def _on_slider(self, attr, raw):
         if self._loading:
@@ -2178,7 +2311,7 @@ class SettingsPanel(QWidget):
         self.controller.click_feedback_enabled = bool(checked)
 
     def _make_action_combo(self, gesture):
-        combo = QComboBox()
+        combo = NoScrollComboBox()
         combo.setCursor(Qt.PointingHandCursor)
         for action, label in ACTION_LABELS:
             combo.addItem(label, action)
@@ -2242,40 +2375,63 @@ class ProfilesPanel(QWidget):
     def __init__(self, controller, parent=None):
         super().__init__(parent)
         self.controller = controller
-        self.setWindowTitle("AirPoint Profiles")
-        self.setFixedSize(360, 470)
-        self.setStyleSheet(BASE_QSS + f" ProfilesPanel {{ background-color: {T.bg}; }}")
-        self.setWindowFlags(Qt.WindowStaysOnTopHint | Qt.Tool)
+        # Embedded as a page inside ControlCenter (no window chrome of its own).
 
-        v = QVBoxLayout(self)
-        v.setContentsMargins(22, 18, 22, 16)
-        v.setSpacing(10)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(24, 18, 24, 18)
+        outer.setSpacing(12)
 
         header = QLabel("Profiles")
-        header.setFont(_font(18, QFont.Bold))
-        header.setStyleSheet(f"color: {T.accent};")
-        v.addWidget(header)
+        header.setFont(_font(20, QFont.Bold))
+        header.setStyleSheet(f"color: {T.text};")
+        outer.addWidget(header)
 
+        hint = QLabel("Double-click a profile to switch to it, or use the actions below.")
+        hint.setFont(_font(12))
+        hint.setStyleSheet(f"color: {T.text_dim};")
+        outer.addWidget(hint)
+
+        # Full-width profile list.
         self.listw = QListWidget()
-        v.addWidget(self.listw, 1)
+        self.listw.itemDoubleClicked.connect(lambda _it: self._switch())
+        outer.addWidget(self.listw, 1)
 
-        def mkbtn(text, slot, danger=False):
+        # Bottom action toolbar: primary action first, destructive on the right.
+        def tbtn(text, slot, kind):
             b = QPushButton(text)
             b.setCursor(Qt.PointingHandCursor)
-            b.setObjectName("danger" if danger else "secondary")
+            b.setFixedHeight(34)
+            if kind == "primary":
+                css = (f"QPushButton {{ background: {T.accent}; color: {T.on_accent}; border: none;"
+                       f" border-radius: 8px; padding: 6px 16px; font-size: 13px; font-weight: 600; }}"
+                       f" QPushButton:hover {{ background: {T.accent_hover}; }}")
+            elif kind == "danger":
+                css = (f"QPushButton {{ background: {T.danger_soft}; color: {T.danger};"
+                       f" border: 1px solid {T.danger_border}; border-radius: 8px; padding: 6px 16px;"
+                       f" font-size: 13px; font-weight: 600; }}"
+                       f" QPushButton:hover {{ background: {T.danger_soft_hover}; }}")
+            else:
+                css = (f"QPushButton {{ background: {T.surface}; color: {T.text};"
+                       f" border: 1px solid {T.border}; border-radius: 8px; padding: 6px 14px;"
+                       f" font-size: 13px; }}"
+                       f" QPushButton:hover {{ background: {T.surface_hover}; }}")
+            b.setStyleSheet(css)
             b.clicked.connect(slot)
             return b
 
-        row1 = QHBoxLayout()
-        row1.addWidget(mkbtn("Switch to", self._switch))
-        row1.addWidget(mkbtn("Set default", self._set_default))
-        v.addLayout(row1)
-        row2 = QHBoxLayout()
-        row2.addWidget(mkbtn("Rename", self._rename))
-        row2.addWidget(mkbtn("Duplicate", self._duplicate))
-        v.addLayout(row2)
-        v.addWidget(mkbtn("Delete", self._delete, danger=True))
+        toolbar = QHBoxLayout()
+        toolbar.setSpacing(8)
+        toolbar.addWidget(tbtn("Switch to", self._switch, "primary"))
+        toolbar.addWidget(tbtn("Set default", self._set_default, "secondary"))
+        toolbar.addWidget(tbtn("Rename", self._rename, "secondary"))
+        toolbar.addWidget(tbtn("Duplicate", self._duplicate, "secondary"))
+        toolbar.addStretch(1)
+        toolbar.addWidget(tbtn("Delete", self._delete, "danger"))
+        outer.addLayout(toolbar)
+        self._refresh()
 
+    def showEvent(self, event):
+        super().showEvent(event)
         self._refresh()
 
     def _selected(self):
@@ -2355,6 +2511,69 @@ class ProfilesPanel(QWidget):
             self._warn(msg)
         else:
             self._refresh()
+
+
+class ControlCenter(QWidget):
+    """A regular desktop window combining Settings and Profiles, with a macOS
+    System-Settings-style sidebar on the left and the selected page on the right."""
+
+    def __init__(self, controller):
+        super().__init__()
+        self.controller = controller
+        self.setWindowTitle("AirPoint")
+        self.setFixedSize(720, 560)
+        self.setStyleSheet(BASE_QSS + f" ControlCenter {{ background-color: {T.bg}; }}")
+
+        h = QHBoxLayout(self)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(0)
+
+        # ---- Sidebar ----
+        sidebar = QWidget()
+        sidebar.setObjectName("sidebar")
+        sidebar.setFixedWidth(168)
+        sidebar.setStyleSheet(
+            f"#sidebar {{ background-color: {T.sidebar_bg}; border-right: 1px solid {T.border}; }}")
+        sv = QVBoxLayout(sidebar)
+        sv.setContentsMargins(12, 16, 12, 16)
+        sv.setSpacing(2)
+        brand = QLabel("AirPoint")
+        brand.setFont(_font(15, QFont.DemiBold))
+        brand.setStyleSheet(f"color: {T.text}; padding: 2px 8px 12px 8px;")
+        sv.addWidget(brand)
+        self.nav = QListWidget()
+        self.nav.setObjectName("nav")
+        self.nav.setFocusPolicy(Qt.NoFocus)
+        self.nav.setFixedHeight(88)
+        self.nav.setStyleSheet(
+            "#nav { background: transparent; border: none; outline: none; }"
+            f" #nav::item {{ padding: 9px 10px; border-radius: 7px; margin: 1px 0;"
+            f" color: {T.text}; }}"
+            f" #nav::item:hover {{ background-color: {T.surface_hover}; }}"
+            f" #nav::item:selected {{ background-color: {T.accent}; color: {T.on_accent}; }}")
+        for name in ("Settings", "Profiles"):
+            self.nav.addItem(name)
+        self.nav.currentRowChanged.connect(self.stack_set_index)
+        sv.addWidget(self.nav)
+        sv.addStretch(1)
+        h.addWidget(sidebar)
+
+        # ---- Content stack ----
+        self.stack = QStackedWidget()
+        self.settings_page = SettingsPanel(self.controller)
+        self.profiles_page = ProfilesPanel(self.controller)
+        self.stack.addWidget(self.settings_page)
+        self.stack.addWidget(self.profiles_page)
+        h.addWidget(self.stack, 1)
+
+        self.nav.setCurrentRow(0)
+
+    def stack_set_index(self, row):
+        if row >= 0:
+            self.stack.setCurrentIndex(row)
+
+    def show_page(self, page):
+        self.nav.setCurrentRow(0 if page == "settings" else 1)
 
 
 class ClickFeedbackOverlay(QWidget):
@@ -4153,12 +4372,11 @@ class HandCenterGestureController:
             tracking_timer.stop()
             panel.timer.stop()
             panel.hide()
-            # Close any open Settings/Profiles tool windows so they can't cover
-            # or race the calibration wizard.
-            for _attr in ('settings_panel', 'profiles_panel'):
-                _p = getattr(panel, _attr, None)
-                if _p is not None:
-                    _p.close()
+            # Close the Settings/Profiles window so it can't cover or race the
+            # calibration wizard.
+            _cc = getattr(panel, 'control_center', None)
+            if _cc is not None:
+                _cc.close()
             # Run recalibration WITHOUT nesting the application event loop.
             # A local QEventLoop returns here when the wizard closes (instead of
             # app.exec_(), whose quit would tear down the main loop), and
