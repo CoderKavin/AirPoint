@@ -88,6 +88,7 @@ a = Analysis(
         'google.protobuf',
         'google.protobuf.descriptor',
         'mediapipe.python._framework_bindings',
+        'certifi',  # auto-updater points urllib's SSL at certifi's CA bundle
     ] + mediapipe_imports,
     hookspath=[],
     hooksconfig={},

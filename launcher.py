@@ -15,6 +15,7 @@ update checks — kept for compatibility with older autostart entries.
 
 import os
 import sys
+import ssl
 import json
 import shutil
 import zipfile
@@ -24,6 +25,23 @@ import traceback
 import urllib.request
 import urllib.error
 from datetime import datetime
+
+
+def _ssl_context():
+    """An SSL context backed by a CA bundle that actually exists in the frozen
+    app. The bundled OpenSSL's compiled-in cert path points at a python.org
+    build location that is absent on users' machines, so urllib's default
+    HTTPS verification fails (silently) on macOS. certifi ships its own CA
+    bundle inside the app, so we point verification at that. Falls back to the
+    system default if certifi is unavailable (e.g. source runs)."""
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        try:
+            return ssl.create_default_context()
+        except Exception:
+            return None
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 VERSION_FILE = os.path.join(APP_DIR, "VERSION")
@@ -67,7 +85,7 @@ def fetch_latest_release():
         req = urllib.request.Request(
             API_URL, headers={"Accept": "application/vnd.github+json"}
         )
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with urllib.request.urlopen(req, timeout=10, context=_ssl_context()) as resp:
             return json.loads(resp.read().decode())
     except (urllib.error.URLError, urllib.error.HTTPError,
             json.JSONDecodeError, OSError):
@@ -83,9 +101,14 @@ def find_asset_url(release_json, asset_name):
 
 
 def download_file(url, dest_path):
-    """Download a URL to a local path. Returns True on success."""
+    """Download a URL to a local path. Returns True on success.
+
+    Uses urlopen (not urlretrieve) so we can pass the certifi-backed SSL
+    context — same macOS cert issue as fetch_latest_release."""
     try:
-        urllib.request.urlretrieve(url, dest_path)
+        with urllib.request.urlopen(url, timeout=120, context=_ssl_context()) as resp, \
+                open(dest_path, "wb") as out:
+            shutil.copyfileobj(resp, out)
         return True
     except (urllib.error.URLError, urllib.error.HTTPError, OSError):
         return False
