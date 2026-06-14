@@ -56,9 +56,9 @@ from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
                               QLabel, QPushButton, QLineEdit, QListWidget,
                               QStackedWidget, QProgressBar, QSizePolicy,
                               QCheckBox, QSlider, QInputDialog, QMessageBox,
-                              QListWidgetItem)
-from PyQt5.QtCore import Qt, QTimer, QEventLoop, pyqtSignal
-from PyQt5.QtGui import QImage, QPixmap, QFont
+                              QListWidgetItem, QComboBox)
+from PyQt5.QtCore import Qt, QTimer, QEventLoop, pyqtSignal, QPoint
+from PyQt5.QtGui import QImage, QPixmap, QFont, QPainter, QColor, QPen
 
 # APP_DIR: when frozen, use the folder containing the exe, not the temp bundle dir
 if FROZEN:
@@ -139,7 +139,9 @@ DEFAULT_CONFIG = {
         "duration": 1.5,
     },
     "gaze_detection_enabled": True,
-    # Stored for forward compatibility; dispatch not yet wired up.
+    "click_feedback": True,
+    # Per-gesture actions. pinch + fist are user-remappable to discrete clicks
+    # (see _do_action); the others are structural (drag / scroll / move) and fixed.
     "gesture_actions": {
         "pinch": "left_click",
         "pinch_hold": "drag",
@@ -148,6 +150,15 @@ DEFAULT_CONFIG = {
         "open_hand": "cursor_move",
     },
 }
+
+# Actions a remappable gesture (pinch / fist) can be bound to, with UI labels.
+ACTION_LABELS = [
+    ("left_click", "Left click"),
+    ("right_click", "Right click"),
+    ("double_click", "Double click"),
+    ("middle_click", "Middle click"),
+    ("none", "Nothing"),
+]
 
 # One-tap "pointer feel" presets. Each bundles the 7 comfort knobs the Settings
 # panel also exposes as sliders. Selecting a preset applies these live and the
@@ -260,6 +271,8 @@ STRINGS = {
         "lang_subtitle": "You can change this later.",
         "lang_english": "English",
         "lang_hindi": "हिन्दी (Hindi)",
+        "lang_malayalam": "മലയാളം (Malayalam)",
+        "lang_tamil": "தமிழ் (Tamil)",
         # Profile selector
         "profile_title": "Welcome Back",
         "profile_subtitle": "Choose your profile to get started",
@@ -359,6 +372,8 @@ STRINGS = {
         "lang_subtitle": "आप इसे बाद में बदल सकते हैं।",
         "lang_english": "English",
         "lang_hindi": "हिन्दी (Hindi)",
+        "lang_malayalam": "മലയാളം (Malayalam)",
+        "lang_tamil": "தமிழ் (Tamil)",
         # Profile selector
         "profile_title": "फिर से स्वागत है",
         "profile_subtitle": "शुरू करने के लिए अपना प्रोफ़ाइल चुनें",
@@ -451,6 +466,176 @@ STRINGS = {
         # Crash
         "crash_title": "AirPoint — कुछ गड़बड़ हो गई",
         "crash_msg": "AirPoint में कोई समस्या आई और इसे बंद करना पड़ा।\n\nआपकी प्रोफ़ाइल और सेटिंग्स सुरक्षित हैं।",
+    },
+    "ml": {
+        "lang_title": "നിങ്ങളുടെ ഭാഷ തിരഞ്ഞെടുക്കൂ",
+        "lang_subtitle": "ഇത് പിന്നീട് മാറ്റാം.",
+        "lang_english": "English",
+        "lang_hindi": "हिन्दी (Hindi)",
+        "lang_malayalam": "മലയാളം (Malayalam)",
+        "lang_tamil": "தமிழ் (Tamil)",
+        "profile_title": "വീണ്ടും സ്വാഗതം",
+        "profile_subtitle": "തുടങ്ങാൻ നിങ്ങളുടെ പ്രൊഫൈൽ തിരഞ്ഞെടുക്കൂ",
+        "profile_new": "+ പുതിയ പ്രൊഫൈൽ",
+        "profile_select": "തിരഞ്ഞെടുക്കൂ",
+        "quit": "പുറത്തുകടക്കൂ",
+        "name_title": "നിങ്ങളുടെ പേരെന്താണ്?",
+        "name_subtitle": "നിങ്ങൾക്കായി ഒരു പ്രൊഫൈൽ ഉണ്ടാക്കാം",
+        "name_placeholder": "ഇവിടെ പേര് ടൈപ്പ് ചെയ്യൂ...",
+        "continue": "തുടരുക",
+        "welcome_hi": "ഹായ്, {name}!",
+        "welcome_default": "ഹായ്!",
+        "welcome_sub": "കൈയും ക്യാമറയും കൊണ്ട് മാത്രം\nനിങ്ങളുടെ കമ്പ്യൂട്ടർ നിയന്ത്രിക്കാം.",
+        "how_title": "ഇത് എങ്ങനെ പ്രവർത്തിക്കുന്നു",
+        "feat_move_title": "കഴ്സർ നീക്കുക",
+        "feat_move_desc": "ക്യാമറയ്ക്ക് മുന്നിൽ കൈ തുറന്നു പിടിക്കൂ.\nകൈ ചലിപ്പിക്കൂ — കഴ്സർ പിന്തുടരും.",
+        "feat_click_title": "ക്ലിക്ക്",
+        "feat_click_desc": "തള്ളവിരലും അടുത്ത വിരലും\nചേർത്ത് നുള്ളൂ. വായുവിൽ ബട്ടൺ അമർത്തുംപോലെ.",
+        "feat_right_title": "റൈറ്റ്-ക്ലിക്ക്",
+        "feat_right_desc": "റൈറ്റ്-ക്ലിക്കിന് മുഷ്ടി ചുരുട്ടൂ.\nസാധാരണ മൗസ് പോലെ മെനു തുറക്കും.",
+        "feat_scroll_title": "സ്ക്രോൾ",
+        "feat_scroll_desc": "രണ്ട് വിരലുകൾ ചേർത്ത് ഉയർത്തി\nമുകളിലോ താഴെയോ നീക്കി പേജ് സ്ക്രോൾ ചെയ്യൂ.",
+        "setup_note": "നിങ്ങളുടെ കൈ ചലനം പഠിക്കാൻ AirPoint-ന്\nആദ്യം 30 സെക്കൻഡ് സജ്ജീകരണം വേണം.",
+        "lets_go": "തുടങ്ങാം!",
+        "skip_setup": "സജ്ജീകരണം ഒഴിവാക്കൂ",
+        "cal_step1_title": "ഘട്ടം 1 / 4 — കഴ്സർ സ്ക്രീൻ മുഴുവൻ എത്താൻ\nനിങ്ങൾ എത്രദൂരം എത്തുമെന്ന് അറിയണം.",
+        "cal_step2_title": "ഘട്ടം 2 / 4 — കുലുക്കം കുറയ്ക്കാൻ നിങ്ങളുടെ കൈ\nഎത്ര സ്ഥിരമാണെന്ന് പരിശോധിക്കുന്നു.",
+        "cal_step3_title": "ഘട്ടം 3 / 4 — ഇങ്ങനെ ക്ലിക്ക് ചെയ്യാം\nനുള്ളൽ വായുവിൽ ബട്ടൺ അമർത്തുംപോലെ.",
+        "cal_step4_title": "ഘട്ടം 4 / 4 — ഇങ്ങനെ റൈറ്റ്-ക്ലിക്ക് ചെയ്യാം\nമുഷ്ടി ചുരുട്ടിയാൽ മെനു തുറക്കും.",
+        "cal_move_left": "കൈ ഇടത്തേക്ക് നീക്കൂ",
+        "cal_move_right": "ഇനി കൈ വലത്തേക്ക് നീക്കൂ",
+        "cal_move_up": "കൈ മുകളിലേക്ക് നീക്കൂ",
+        "cal_move_down": "കൈ താഴേക്ക് നീക്കൂ",
+        "cal_hint_dir": "സുഖമായി {dir} ഭാഗത്തേക്ക് കൈ എത്തുമ്പോൾ സ്പെയ്സ്ബാർ അമർത്തൂ",
+        "cal_hint_steady": "കാത്തിരിക്കൂ — ക്യാമറ നിങ്ങളുടെ കൈ നോക്കുന്നു",
+        "cal_steady_inst": "കൈ അനക്കാതെ ശാന്തമായി പിടിക്കൂ",
+        "cal_pinch_inst": "തള്ളവിരലും അടുത്ത വിരലും ചേർത്ത് നുള്ളൂ",
+        "cal_fist_inst": "മുഷ്ടി ചുരുട്ടൂ — എല്ലാ വിരലുകളും അടയ്ക്കൂ",
+        "cal_hint_gesture": "റെക്കോർഡ് ചെയ്യാൻ സ്പെയ്സ്ബാർ  അല്ലെങ്കിൽ  ഒഴിവാക്കാൻ N",
+        "cal_hold_still": "അനക്കാതെ പിടിക്കൂ...",
+        "cal_hand_lost": "കൈ കണ്ടില്ല — വീണ്ടും ശ്രമിക്കൂ",
+        "cal_show_hand": "തുടങ്ങാൻ കൈ കാണിക്കൂ",
+        "cal_recording": "റെക്കോർഡ് ചെയ്യുന്നു... ആംഗ്യം പിടിക്കൂ",
+        "done_title": "എല്ലാം തയ്യാർ!",
+        "done_subtitle": "AirPoint തയ്യാർ. ഒരു ചെറിയ ഓർമ്മപ്പെടുത്തൽ:",
+        "done_gesture_open": "തുറന്ന കൈ",
+        "done_gesture_pinch": "നുള്ളൽ",
+        "done_gesture_fist": "മുഷ്ടി",
+        "done_gesture_scroll": "രണ്ട് വിരൽ മുകളിലോ താഴെയോ",
+        "done_action_move": "കഴ്സർ നീക്കുക",
+        "done_action_click": "ക്ലിക്ക്",
+        "done_action_right": "റൈറ്റ്-ക്ലിക്ക്",
+        "done_action_scroll": "സ്ക്രോൾ",
+        "done_extras_title": "ഇവയും പിന്നീട് ഓൺ ചെയ്യാം:",
+        "done_extras_gaze": "<b style='color:#ccc;'>നോക്കാത്തപ്പോൾ താൽക്കാലികമായി നിർത്തുക</b> <span style='color:#888;'>— സ്ക്രീനിൽ നിന്ന് നോട്ടം മാറ്റിയാൽ AirPoint നിർത്തും, അബദ്ധത്തിൽ കഴ്സർ നീങ്ങില്ല.</span>",
+        "done_extras_dwell": "<b style='color:#ccc;'>ഓട്ടോ-ക്ലിക്ക്</b> <span style='color:#888;'>— ഒരു സാധനത്തിന് മുകളിൽ കൈ അനക്കാതെ നിർത്തിയാൽ AirPoint തനിയെ ക്ലിക്ക് ചെയ്യും.</span>",
+        "autostart_label": "കമ്പ്യൂട്ടർ ഓണാകുമ്പോൾ AirPoint തുടങ്ങുക",
+        "start_airpoint": "AirPoint തുടങ്ങൂ",
+        "panel_hi": "ഹായ്, {name}",
+        "panel_looking": "നിങ്ങളുടെ കൈ തിരയുന്നു...",
+        "panel_moving": "കഴ്സർ നീക്കുന്നു",
+        "panel_clicked": "ക്ലിക്ക് ചെയ്തു!",
+        "panel_dragging": "വലിച്ചിടുന്നു...",
+        "panel_drag_done": "വലിച്ചിടൽ പൂർത്തിയായി",
+        "panel_right_clicked": "റൈറ്റ്-ക്ലിക്ക് ചെയ്തു!",
+        "panel_scrolling": "സ്ക്രോൾ ചെയ്യുന്നു",
+        "panel_pinch_drag": "വലിച്ചിടാൻ നുള്ളിപ്പിടിക്കൂ...",
+        "panel_auto_clicked": "തനിയെ ക്ലിക്ക് ചെയ്തു!",
+        "panel_look_screen": "തുടങ്ങാൻ സ്ക്രീനിലേക്ക് നോക്കൂ",
+        "panel_ready": "തയ്യാർ — കൈ നീക്കൂ",
+        "panel_gaze_on": "  നോക്കാത്തപ്പോൾ നിർത്തുക  —  ഓൺ\n  സ്ക്രീനിൽ നിന്ന് നോട്ടം മാറ്റിയാൽ AirPoint നിർത്തും",
+        "panel_gaze_off": "  നോക്കാത്തപ്പോൾ നിർത്തുക  —  ഓഫ്\n  ഓൺ ചെയ്യാൻ ഇവിടെ ടാപ്പ് ചെയ്യൂ",
+        "panel_dwell_on": "  അനക്കാതെ നിർത്തുമ്പോൾ ഓട്ടോ-ക്ലിക്ക്  —  ഓൺ\n  ഒരിടത്ത് നിന്നാൽ തനിയെ ക്ലിക്ക് ചെയ്യും",
+        "panel_dwell_off": "  അനക്കാതെ നിർത്തുമ്പോൾ ഓട്ടോ-ക്ലിക്ക്  —  ഓഫ്\n  ഓൺ ചെയ്യാൻ ഇവിടെ ടാപ്പ് ചെയ്യൂ",
+        "panel_redo": "സജ്ജീകരണം വീണ്ടും ചെയ്യൂ",
+        "panel_stop": "AirPoint നിർത്തൂ",
+        "crash_title": "AirPoint — എന്തോ പിശക് സംഭവിച്ചു",
+        "crash_msg": "AirPoint-ന് അപ്രതീക്ഷിത പിശക് സംഭവിച്ചു, അടയ്ക്കേണ്ടതുണ്ട്.\n\nനിങ്ങളുടെ പ്രൊഫൈലുകളും ക്രമീകരണങ്ങളും സുരക്ഷിതമാണ്.",
+    },
+    "ta": {
+        "lang_title": "உங்கள் மொழியைத் தேர்ந்தெடுக்கவும்",
+        "lang_subtitle": "இதை பிறகு மாற்றலாம்.",
+        "lang_english": "English",
+        "lang_hindi": "हिन्दी (Hindi)",
+        "lang_malayalam": "മലയാളം (Malayalam)",
+        "lang_tamil": "தமிழ் (Tamil)",
+        "profile_title": "மீண்டும் வரவேற்கிறோம்",
+        "profile_subtitle": "தொடங்க உங்கள் சுயவிவரத்தைத் தேர்ந்தெடுக்கவும்",
+        "profile_new": "+ புதிய சுயவிவரம்",
+        "profile_select": "தேர்வு",
+        "quit": "வெளியேறு",
+        "name_title": "உங்கள் பெயர் என்ன?",
+        "name_subtitle": "உங்களுக்கான தனிப்பட்ட சுயவிவரத்தை உருவாக்குவோம்",
+        "name_placeholder": "உங்கள் பெயரை இங்கே தட்டச்சு செய்யவும்...",
+        "continue": "தொடரவும்",
+        "welcome_hi": "வணக்கம், {name}!",
+        "welcome_default": "வணக்கம்!",
+        "welcome_sub": "உங்கள் கையும் ஒரு கேமராவும் மட்டுமே\nகொண்டு கணினியைக் கட்டுப்படுத்தலாம்.",
+        "how_title": "இது எப்படி வேலை செய்கிறது",
+        "feat_move_title": "சுட்டியை நகர்த்துதல்",
+        "feat_move_desc": "கேமரா முன் கையைத் திறந்து வைக்கவும்.\nகையை நகர்த்தினால் சுட்டியும் பின்தொடரும்.",
+        "feat_click_title": "கிளிக் செய்தல்",
+        "feat_click_desc": "கட்டைவிரலையும் அதன் அருகிலுள்ள விரலையும்\nஇணைக்கவும். காற்றில் பட்டனை அழுத்துவது போல.",
+        "feat_right_title": "வலது கிளிக்",
+        "feat_right_desc": "வலது கிளிக்கிற்கு கையை முட்டியாக மூடவும்.\nஇது சாதாரண சுட்டி போல மெனுக்களைத் திறக்கும்.",
+        "feat_scroll_title": "ஸ்க்ரோல் செய்தல்",
+        "feat_scroll_desc": "இரண்டு விரல்களை அருகருகே நிமிர்த்தி\nமேலே அல்லது கீழே நகர்த்தி பக்கத்தை ஸ்க்ரோல் செய்யவும்.",
+        "setup_note": "முதலில், உங்கள் கை அசைவை AirPoint அறிய\nஒரு விரைவான 30-வினாடி அமைப்பு தேவை.",
+        "lets_go": "தொடங்குவோம்!",
+        "skip_setup": "அமைப்பைத் தவிர்",
+        "cal_step1_title": "படி 1/4 — சுட்டி உங்கள் முழு திரையையும் சேர\nநீங்கள் எவ்வளவு தூரம் எட்டுவீர்கள் என அறிய வேண்டும்.",
+        "cal_step2_title": "படி 2/4 — அசைவைக் குறைக்க உங்கள் கை எவ்வளவு\nஸ்திரமாக உள்ளது என சரிபார்க்கிறோம்.",
+        "cal_step3_title": "படி 3/4 — இப்படித்தான் கிளிக் செய்வீர்கள்\nகிள்ளுவது காற்றில் பட்டனை அழுத்துவது போல.",
+        "cal_step4_title": "படி 4/4 — இப்படித்தான் வலது கிளிக் செய்வீர்கள்\nமுட்டி பிடிப்பது மெனுக்களைத் திறக்கும்.",
+        "cal_move_left": "உங்கள் கையை இடதுபுறம் நகர்த்தவும்",
+        "cal_move_right": "இப்போது கையை வலதுபுறம் நகர்த்தவும்",
+        "cal_move_up": "உங்கள் கையை மேலே நகர்த்தவும்",
+        "cal_move_down": "உங்கள் கையை கீழே நகர்த்தவும்",
+        "cal_hint_dir": "கை வசதியாக எட்டும் {dir} எல்லைக்கு வந்ததும் ஸ்பேஸ்பாரை அழுத்தவும்",
+        "cal_hint_steady": "காத்திருங்கள் — கேமரா உங்கள் கையைப் பார்க்கிறது",
+        "cal_steady_inst": "கையை அசைக்காமல் வைத்து ஓய்வாக இருங்கள்",
+        "cal_pinch_inst": "கட்டைவிரலையும் அதன் அருகிலுள்ள விரலையும் இணைக்கவும்",
+        "cal_fist_inst": "முட்டி பிடிக்கவும் — அனைத்து விரல்களையும் மூடவும்",
+        "cal_hint_gesture": "பதிவுசெய்ய ஸ்பேஸ்பார்  அல்லது  தவிர்க்க N அழுத்தவும்",
+        "cal_hold_still": "அசைக்காமல் வைக்கவும்...",
+        "cal_hand_lost": "கை தெரியவில்லை — மீண்டும் முயற்சிக்கவும்",
+        "cal_show_hand": "தொடங்க உங்கள் கையைக் காட்டவும்",
+        "cal_recording": "பதிவாகிறது... சைகையை வைத்திருங்கள்",
+        "done_title": "எல்லாம் தயார்!",
+        "done_subtitle": "AirPoint தயார். ஒரு விரைவான நினைவூட்டல்:",
+        "done_gesture_open": "திறந்த கை",
+        "done_gesture_pinch": "கிள்ளு",
+        "done_gesture_fist": "முட்டி",
+        "done_gesture_scroll": "இரண்டு விரல்கள் மேலே/கீழே",
+        "done_action_move": "சுட்டியை நகர்த்து",
+        "done_action_click": "கிளிக்",
+        "done_action_right": "வலது கிளிக்",
+        "done_action_scroll": "ஸ்க்ரோல்",
+        "done_extras_title": "இவற்றையும் பிறகு இயக்கலாம்:",
+        "done_extras_gaze": "<b style='color:#ccc;'>பார்க்காதபோது இடைநிறுத்து</b> <span style='color:#888;'>— திரையை விட்டு வேறு பக்கம் பார்த்தால் AirPoint இடைநிறுத்தும், எனவே தற்செயலாக சுட்டி நகராது.</span>",
+        "done_extras_dwell": "<b style='color:#ccc;'>தானியங்கி கிளிக்</b> <span style='color:#888;'>— ஒரு பொருளின் மேல் கையை சிறிது நேரம் அசைக்காமல் வைத்தால், AirPoint தானாகவே கிளிக் செய்யும்.</span>",
+        "autostart_label": "கணினி இயங்கும்போது AirPoint-ஐ தொடங்கு",
+        "start_airpoint": "AirPoint-ஐ தொடங்கு",
+        "panel_hi": "வணக்கம், {name}",
+        "panel_looking": "உங்கள் கையைத் தேடுகிறது...",
+        "panel_moving": "சுட்டி நகர்கிறது",
+        "panel_clicked": "கிளிக் ஆனது!",
+        "panel_dragging": "இழுக்கிறது...",
+        "panel_drag_done": "இழுத்தல் முடிந்தது",
+        "panel_right_clicked": "வலது கிளிக் ஆனது!",
+        "panel_scrolling": "ஸ்க்ரோல் ஆகிறது",
+        "panel_pinch_drag": "இழுக்க கிள்ளியபடி வைத்திருங்கள்...",
+        "panel_auto_clicked": "தானாக கிளிக் ஆனது!",
+        "panel_look_screen": "தொடங்க திரையைப் பாருங்கள்",
+        "panel_ready": "தயார் — உங்கள் கையை நகர்த்தவும்",
+        "panel_gaze_on": "  பார்க்காதபோது இடைநிறுத்து  —  இயக்கப்பட்டது\n  திரையை விட்டு பார்த்தால் AirPoint இடைநிறுத்தும்",
+        "panel_gaze_off": "  பார்க்காதபோது இடைநிறுத்து  —  நிறுத்தப்பட்டது\n  இதை இயக்க இங்கே தட்டவும்",
+        "panel_dwell_on": "  அசைக்காமல் வைத்தால் தானியங்கி கிளிக்  —  இயக்கப்பட்டது\n  ஒரே இடத்தில் நின்றால் உங்களுக்காக கிளிக் செய்யும்",
+        "panel_dwell_off": "  அசைக்காமல் வைத்தால் தானியங்கி கிளிக்  —  நிறுத்தப்பட்டது\n  இதை இயக்க இங்கே தட்டவும்",
+        "panel_redo": "அமைப்பை மீண்டும் செய்",
+        "panel_stop": "AirPoint-ஐ நிறுத்து",
+        "crash_title": "AirPoint — ஏதோ தவறு நடந்தது",
+        "crash_msg": "AirPoint எதிர்பாராத பிழையை சந்தித்ததால் மூட வேண்டும்.\n\nஉங்கள் சுயவிவரங்களும் அமைப்புகளும் பாதுகாப்பாக உள்ளன.",
     },
 }
 
@@ -636,6 +821,28 @@ class SetupWizard(QWidget):
         hi_btn.setCursor(Qt.PointingHandCursor)
         hi_btn.clicked.connect(lambda: self._on_language_chosen("hi"))
         vbox.addWidget(hi_btn)
+
+        vbox.addSpacing(10)
+
+        ml_btn = QPushButton("മലയാളം (Malayalam)")
+        ml_btn.setFixedHeight(52)
+        ml_btn.setStyleSheet("""
+            QPushButton { font-size: 18px; border-radius: 12px; }
+        """)
+        ml_btn.setCursor(Qt.PointingHandCursor)
+        ml_btn.clicked.connect(lambda: self._on_language_chosen("ml"))
+        vbox.addWidget(ml_btn)
+
+        vbox.addSpacing(10)
+
+        ta_btn = QPushButton("தமிழ் (Tamil)")
+        ta_btn.setFixedHeight(52)
+        ta_btn.setStyleSheet("""
+            QPushButton { font-size: 18px; border-radius: 12px; }
+        """)
+        ta_btn.setCursor(Qt.PointingHandCursor)
+        ta_btn.clicked.connect(lambda: self._on_language_chosen("ta"))
+        vbox.addWidget(ta_btn)
 
         vbox.addStretch(1)
         return page
@@ -1085,9 +1292,13 @@ class SetupWizard(QWidget):
             self.cal_instruction.setText(inst_map.get(d, ""))
             # For Hindi, direction names stay in the hint via {dir}
             dir_display = {"LEFT": "LEFT", "RIGHT": "RIGHT", "UP": "UP", "DOWN": "DOWN"}
-            if _current_lang == "hi":
-                dir_display = {"LEFT": "बाईं ओर", "RIGHT": "दाईं ओर",
-                               "UP": "ऊपर", "DOWN": "नीचे"}
+            _dir_by_lang = {
+                "hi": {"LEFT": "बाईं ओर", "RIGHT": "दाईं ओर", "UP": "ऊपर", "DOWN": "नीचे"},
+                "ml": {"LEFT": "ഇടത്", "RIGHT": "വലത്", "UP": "മുകൾ", "DOWN": "താഴ്"},
+                "ta": {"LEFT": "இடது", "RIGHT": "வலது", "UP": "மேல்", "DOWN": "கீழ்"},
+            }
+            if _current_lang in _dir_by_lang:
+                dir_display = _dir_by_lang[_current_lang]
             self.cal_hint.setText(S("cal_hint_dir", dir=dir_display.get(d, d)))
             self.cal_progress.setVisible(False)
         elif self.cal_step == 1:
@@ -1116,51 +1327,68 @@ class SetupWizard(QWidget):
     # ---- Timer Tick (Camera + Calibration Logic) ----
 
     def _on_timer_tick(self):
-        ret, frame = self.controller.cap.read()
-        if not ret:
-            return
-        frame = cv2.flip(frame, 1)
-        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        hand_results = self.controller.hands.process(rgb_frame)
-        frame_h, frame_w = frame.shape[:2]
+        try:
+            ret, frame = self.controller.cap.read()
+            if not ret:
+                return
+            frame = cv2.flip(frame, 1)
+            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            hand_results = self.controller.hands.process(rgb_frame)
+            frame_h, frame_w = frame.shape[:2]
 
-        hand_center = None
-        landmarks = None
-        if hand_results.multi_hand_landmarks:
-            for hl in hand_results.multi_hand_landmarks:
-                self.controller.mp_draw.draw_landmarks(
-                    frame, hl, self.controller.mp_hands.HAND_CONNECTIONS,
-                    self.controller.mp_draw.DrawingSpec(color=(80, 80, 80), thickness=1, circle_radius=1),
-                    self.controller.mp_draw.DrawingSpec(color=(60, 60, 60), thickness=1)
-                )
-                landmarks = self.controller.get_landmarks(hl)
-                hand_center = self.controller.calculate_hand_center(landmarks)
-                hx = int(hand_center[0] * frame_w)
-                hy = int(hand_center[1] * frame_h)
-                cv2.circle(frame, (hx, hy), 20, (0, 220, 200), 3)
-                cv2.circle(frame, (hx, hy), 5, (0, 220, 200), -1)
+            hand_center = None
+            landmarks = None
+            if hand_results.multi_hand_landmarks:
+                for hl in hand_results.multi_hand_landmarks:
+                    self.controller.mp_draw.draw_landmarks(
+                        frame, hl, self.controller.mp_hands.HAND_CONNECTIONS,
+                        self.controller.mp_draw.DrawingSpec(color=(80, 80, 80), thickness=1, circle_radius=1),
+                        self.controller.mp_draw.DrawingSpec(color=(60, 60, 60), thickness=1)
+                    )
+                    landmarks = self.controller.get_landmarks(hl)
+                    hand_center = self.controller.calculate_hand_center(landmarks)
+                    hx = int(hand_center[0] * frame_w)
+                    hy = int(hand_center[1] * frame_h)
+                    cv2.circle(frame, (hx, hy), 20, (0, 220, 200), 3)
+                    cv2.circle(frame, (hx, hy), 5, (0, 220, 200), -1)
 
-        # Draw recorded direction points
-        for rec_label, rec_pos in self.recorded.items():
-            rx = int(rec_pos[0] * frame_w)
-            ry = int(rec_pos[1] * frame_h)
-            cv2.circle(frame, (rx, ry), 12, (0, 200, 120), -1)
+            # Draw recorded direction points
+            for rec_label, rec_pos in self.recorded.items():
+                rx = int(rec_pos[0] * frame_w)
+                ry = int(rec_pos[1] * frame_h)
+                cv2.circle(frame, (rx, ry), 12, (0, 200, 120), -1)
 
-        self.camera_widget.update_frame(frame)
+            self.camera_widget.update_frame(frame)
 
-        # Dispatch to step handler
-        if self.cal_step == 0:
-            self._tick_movement(hand_center)
-        elif self.cal_step == 1:
-            self._tick_steadiness(hand_center)
-        elif self.cal_step == 2:
-            self._tick_gesture(hand_center, landmarks, "PINCH")
-        elif self.cal_step == 3:
-            self._tick_gesture(hand_center, landmarks, "FIST")
+            # Dispatch to step handler
+            if self.cal_step == 0:
+                self._tick_movement(hand_center)
+            elif self.cal_step == 1:
+                self._tick_steadiness(hand_center)
+            elif self.cal_step == 2:
+                self._tick_gesture(hand_center, landmarks, "PINCH")
+            elif self.cal_step == 3:
+                self._tick_gesture(hand_center, landmarks, "FIST")
 
-        # Consume key flags
-        self._space = False
-        self._n_key = False
+            # Consume key flags
+            self._space = False
+            self._n_key = False
+            self._cal_error_count = 0
+        except SystemExit:
+            raise
+        except Exception as e:
+            # One bad frame must never crash the setup wizard (mirrors _tracking_tick).
+            _write_crash_log(type(e), e, e.__traceback__)
+            self._cal_error_count = getattr(self, '_cal_error_count', 0) + 1
+            if self._cal_error_count >= 60:  # ~2s of consecutive failures
+                self.timer.stop()
+                try:
+                    QMessageBox.warning(self, "AirPoint",
+                        "AirPoint lost the camera during setup. Reconnect it (or "
+                        "close any app using it) and start setup again.")
+                except Exception:
+                    pass
+                self._finish("quit")
 
     def _tick_movement(self, hand_center):
         DIRECTIONS = ["LEFT", "RIGHT", "UP", "DOWN"]
@@ -1385,7 +1613,7 @@ class StatusPanel(QWidget):
         super().__init__()
         self.controller = controller
         self.setWindowTitle("AirPoint")
-        self.setFixedSize(360, 600)
+        self.setFixedSize(360, 660)
         self.setStyleSheet(DARK_STYLE + " StatusPanel { background-color: #1e1e23; }")
         self.setWindowFlags(Qt.WindowStaysOnTopHint | Qt.Tool)
 
@@ -1418,7 +1646,16 @@ class StatusPanel(QWidget):
         """)
         vbox.addWidget(self.status_badge)
 
-        vbox.addSpacing(14)
+        vbox.addSpacing(12)
+
+        # ---- Pause / resume (park the cursor) ----
+        self.pause_btn = QPushButton()
+        self.pause_btn.setCursor(Qt.PointingHandCursor)
+        self.pause_btn.setFixedHeight(48)
+        self.pause_btn.clicked.connect(self._toggle_pause)
+        vbox.addWidget(self.pause_btn)
+
+        vbox.addSpacing(10)
 
         # ---- Toggle buttons ----
         self.gaze_btn = QPushButton()
@@ -1489,6 +1726,10 @@ class StatusPanel(QWidget):
         self.controller.toggle_gaze_detection()
         self._update_status()
 
+    def _toggle_pause(self):
+        self.controller.toggle_pause()
+        self._update_status()
+
     def _toggle_dwell(self):
         self.controller.toggle_dwell_click()
         self._update_status()
@@ -1519,9 +1760,21 @@ class StatusPanel(QWidget):
         c = self.controller
         self.profile_label.setText(S("panel_hi", name=c.profile_name or "User"))
 
+        # -- Pause button --
+        if getattr(c, 'paused', False):
+            self.pause_btn.setText("▶  Resume tracking")
+            self.pause_btn.setStyleSheet(self.TOGGLE_ON)
+        else:
+            self.pause_btn.setText("⏸  Pause tracking")
+            self.pause_btn.setStyleSheet(self.TOGGLE_OFF)
+
         # -- Status badge --
         gesture = getattr(c, '_last_gesture', 'no_hand')
-        if gesture == 'no_hand':
+        if getattr(c, 'paused', False):
+            self.status_badge.setText("⏸  Paused")
+            self.status_badge.setStyleSheet(
+                "background-color: #3a3320; color: #ffcc66; border-radius: 12px; padding: 8px;")
+        elif gesture == 'no_hand':
             self.status_badge.setText(S("panel_looking"))
             self.status_badge.setStyleSheet(
                 "background-color: #2a2a32; color: #888; border-radius: 12px; padding: 8px;")
@@ -1587,6 +1840,12 @@ class StatusPanel(QWidget):
             p = getattr(self, attr, None)
             if p is not None:
                 p.close()
+        # Closing the panel by ANY means (incl. the OS X-button) must stop the
+        # tracking loop — otherwise the cursor keeps moving with no UI to stop it.
+        cb = getattr(self, '_on_close_quit', None)
+        if cb is not None:
+            self._on_close_quit = None  # one-shot: on_quit calls panel.close() again
+            cb()
         event.accept()
 
 
@@ -1681,6 +1940,18 @@ class SettingsPanel(QWidget):
         self.dwell_cb.toggled.connect(self._on_dwell_toggle)
         v.addWidget(self.dwell_cb)
 
+        self.feedback_cb = QCheckBox("Show a ring when I click")
+        self.feedback_cb.toggled.connect(self._on_feedback_toggle)
+        v.addWidget(self.feedback_cb)
+
+        # ---- Gesture actions (remap the click gestures) ----
+        v.addWidget(self._caption("Pinch does"))
+        self.pinch_combo = self._make_action_combo("pinch")
+        v.addWidget(self.pinch_combo)
+        v.addWidget(self._caption("Fist does"))
+        self.fist_combo = self._make_action_combo("fist")
+        v.addWidget(self.fist_combo)
+
         v.addStretch(1)
 
         btn_row = QHBoxLayout()
@@ -1735,6 +2006,25 @@ class SettingsPanel(QWidget):
         self.controller.dwell_click_enabled = bool(checked)
         self.controller._reset_dwell()
 
+    def _on_feedback_toggle(self, checked):
+        if self._loading:
+            return
+        self.controller.click_feedback_enabled = bool(checked)
+
+    def _make_action_combo(self, gesture):
+        combo = QComboBox()
+        combo.setCursor(Qt.PointingHandCursor)
+        for action, label in ACTION_LABELS:
+            combo.addItem(label, action)
+        combo.currentIndexChanged.connect(
+            lambda _idx, g=gesture, c=combo: self._on_action_changed(g, c))
+        return combo
+
+    def _on_action_changed(self, gesture, combo):
+        if self._loading:
+            return
+        self.controller.gesture_actions[gesture] = combo.currentData()
+
     def _on_preset(self, key):
         self.controller.apply_preset(key)
         self._sync_from_controller()
@@ -1746,6 +2036,12 @@ class SettingsPanel(QWidget):
             sl.setValue(int(round(real * scale)))
             val.setText(fmt(real))
         self.dwell_cb.setChecked(bool(self.controller.dwell_click_enabled))
+        self.feedback_cb.setChecked(bool(getattr(self.controller, "click_feedback_enabled", True)))
+        ga = self.controller.gesture_actions
+        for gesture, combo, default in (("pinch", self.pinch_combo, "left_click"),
+                                        ("fist", self.fist_combo, "right_click")):
+            idx = combo.findData(ga.get(gesture, default))
+            combo.setCurrentIndex(idx if idx >= 0 else 0)
         self._loading = False
         self._highlight_preset()
 
@@ -1855,6 +2151,10 @@ class ProfilesPanel(QWidget):
             return
         if self.controller.load_profile(name):
             self._refresh()  # StatusPanel's own timer will refresh its label
+            if self.controller.calibration is None:
+                self._warn(f"Profile '{name}' isn't set up yet, so the pointer "
+                           f"won't track properly. Use \"Redo setup\" on the main "
+                           f"panel to calibrate it.")
 
     def _set_default(self):
         name = self._selected()
@@ -1898,6 +2198,104 @@ class ProfilesPanel(QWidget):
             self._warn(msg)
         else:
             self._refresh()
+
+
+class ClickFeedbackOverlay(QWidget):
+    """Transparent, click-through, always-on-top ring animation drawn at the
+    point of each click/right-click/drag/scroll. It NEVER intercepts mouse input
+    (so it can't break the clicks it visualizes) and costs nothing when idle —
+    the repaint timer only runs while ripples are alive."""
+
+    DURATION = 0.34   # seconds per ripple
+    BASE_R = 10       # starting radius (px)
+    GROW_R = 34       # growth over the animation
+    MAX_RIPPLES = 8
+    COLORS = {
+        "left":   (0, 220, 200),    # cyan
+        "right":  (255, 170, 68),   # orange
+        "drag":   (255, 136, 204),  # pink
+        "scroll": (136, 170, 255),  # blue
+    }
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._ripples = []  # each: {"x","y","kind","t0"}
+        self.setWindowFlags(
+            Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint |
+            Qt.Tool | Qt.WindowTransparentForInput)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.setAttribute(Qt.WA_ShowWithoutActivating, True)
+        self.setAttribute(Qt.WA_NoSystemBackground, True)
+        self.setFocusPolicy(Qt.NoFocus)
+        self.setGeometry(QApplication.desktop().geometry())  # cover all monitors
+
+        self._anim_timer = QTimer(self)
+        self._anim_timer.setInterval(16)  # ~60fps, only while ripples are live
+        self._anim_timer.timeout.connect(self._on_tick)
+
+    def flash(self, gx, gy, kind):
+        """Add a ripple at global (gx, gy). Called directly from the tracker."""
+        if kind not in self.COLORS:
+            kind = "left"
+        self._ripples.append({"x": int(gx), "y": int(gy), "kind": kind,
+                              "t0": time.monotonic()})
+        if len(self._ripples) > self.MAX_RIPPLES:
+            self._ripples = self._ripples[-self.MAX_RIPPLES:]
+        if not self._anim_timer.isActive():
+            self._anim_timer.start()
+        self.update()
+
+    def _on_tick(self):
+        now = time.monotonic()
+        self._ripples = [r for r in self._ripples if (now - r["t0"]) < self.DURATION]
+        self.update()
+        if not self._ripples:
+            self._anim_timer.stop()
+
+    def paintEvent(self, event):
+        if not self._ripples:
+            return
+        now = time.monotonic()
+        ox, oy = self.x(), self.y()  # virtual-desktop origin -> widget-local
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        for r in self._ripples:
+            prog = (now - r["t0"]) / self.DURATION
+            prog = 0.0 if prog < 0 else 1.0 if prog > 1 else prog
+            radius = self.BASE_R + prog * self.GROW_R
+            alpha = int(220 * (1.0 - prog))
+            cr, cg, cb = self.COLORS[r["kind"]]
+            cx, cy = r["x"] - ox, r["y"] - oy
+            pen = QPen(QColor(cr, cg, cb, alpha))
+            pen.setWidth(3)
+            p.setPen(pen)
+            p.setBrush(Qt.NoBrush)
+            p.drawEllipse(QPoint(cx, cy), int(radius), int(radius))
+            if prog < 0.3:  # brief center dot
+                p.setPen(Qt.NoPen)
+                p.setBrush(QColor(cr, cg, cb, alpha))
+                p.drawEllipse(QPoint(cx, cy), 3, 3)
+        p.end()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if sys.platform == "win32":
+            # Belt-and-suspenders click-through on Windows (WindowTransparentForInput
+            # has been flaky in some frozen builds): force WS_EX_TRANSPARENT.
+            try:
+                import ctypes
+                GWL_EXSTYLE = -20
+                WS_EX_TRANSPARENT = 0x00000020
+                WS_EX_LAYERED = 0x00080000
+                WS_EX_NOACTIVATE = 0x08000000
+                hwnd = int(self.winId())
+                u = ctypes.windll.user32
+                ex = u.GetWindowLongW(hwnd, GWL_EXSTYLE)
+                u.SetWindowLongW(hwnd, GWL_EXSTYLE,
+                                 ex | WS_EX_TRANSPARENT | WS_EX_LAYERED | WS_EX_NOACTIVATE)
+            except Exception:
+                pass
 
 
 class HandCenterGestureController:
@@ -2081,6 +2479,8 @@ class HandCenterGestureController:
         self.prev_hand_center = None
         self.last_action_time = 0
         self.fist_history = deque(maxlen=8)
+        self.overlay = None  # ClickFeedbackOverlay, created in run() once a QApplication exists
+        self.paused = False  # when True the tracking tick does no detection/cursor control
 
         # Two-finger scroll state
         self.scroll_reference_y = None
@@ -2147,6 +2547,12 @@ class HandCenterGestureController:
         if self.profile_name is not None:
             self.save_profile()
 
+    def toggle_pause(self):
+        """Pause/resume tracking. Paused = the tick does no detection or cursor
+        control, so the cursor parks where it is until resumed."""
+        self.paused = not self.paused
+        print(f"Tracking: {'PAUSED' if self.paused else 'RESUMED'}")
+
     def _apply_config(self, config):
         """Apply a config dict to instance attributes, filling missing keys from DEFAULT_CONFIG."""
         merged = copy.deepcopy(DEFAULT_CONFIG)
@@ -2156,28 +2562,39 @@ class HandCenterGestureController:
             else:
                 merged[key] = config[key]
 
-        self.sensitivity = merged["sensitivity"]
-        self.smoothing_factor = merged["smoothing_factor"]
+        # Clamp user-tunable numerics so a corrupt / hand-edited / out-of-range
+        # profile can never crash the loop or make the cursor uncontrollable.
+        def _clamp(v, lo, hi, default):
+            try:
+                v = float(v)
+            except (TypeError, ValueError):
+                return default
+            if not math.isfinite(v):
+                return default
+            return max(lo, min(hi, v))
 
         th = merged["thresholds"]
-        self.drag_threshold = th["drag_threshold"]
-        self.action_cooldown = th["action_cooldown"]
-        self.pinch_threshold = th["pinch_threshold"]
-        self.fist_threshold = th["fist_threshold"]
-        self.scroll_dead_zone = th["scroll_dead_zone"]
-        self.scroll_threshold_val = th["scroll_threshold"]
-        self.scroll_amount = th["scroll_amount"]
-        self.screen_edge_margin = th["screen_edge_margin"]
-        self.cursor_dead_zone = th["cursor_dead_zone"]
-        self.calibration_margin = th["calibration_margin"]
+        self.sensitivity = _clamp(merged["sensitivity"], 0.5, 5.0, DEFAULT_CONFIG["sensitivity"])
+        self.smoothing_factor = _clamp(merged["smoothing_factor"], 0.0, 0.95, DEFAULT_CONFIG["smoothing_factor"])
+        self.drag_threshold = _clamp(th["drag_threshold"], 0.1, 2.0, 0.4)
+        self.action_cooldown = _clamp(th["action_cooldown"], 0.05, 1.0, 0.15)
+        self.pinch_threshold = th["pinch_threshold"]   # may be None (calibration-derived)
+        self.fist_threshold = th["fist_threshold"]     # may be None
+        self.scroll_dead_zone = _clamp(th["scroll_dead_zone"], 0.0, 0.2, 0.015)
+        self.scroll_threshold_val = _clamp(th["scroll_threshold"], 0.005, 0.2, 0.035)
+        self.scroll_amount = int(_clamp(th["scroll_amount"], 1, 10, 2))
+        self.screen_edge_margin = int(_clamp(th["screen_edge_margin"], 0, 200, 20))
+        self.cursor_dead_zone = int(_clamp(th["cursor_dead_zone"], 0, 60, 10))
+        self.calibration_margin = _clamp(th["calibration_margin"], 0.0, 0.5, 0.05)
 
         dw = merged["dwell_click"]
-        self.dwell_click_enabled = dw["enabled"]
-        self.dwell_click_radius = dw["radius"]
-        self.dwell_click_duration = dw["duration"]
+        self.dwell_click_enabled = bool(dw["enabled"])
+        self.dwell_click_radius = int(_clamp(dw["radius"], 5, 200, 30))
+        self.dwell_click_duration = _clamp(dw["duration"], 0.3, 6.0, 1.5)
 
         self.gaze_detection_enabled = merged["gaze_detection_enabled"]
-        self.gesture_actions = merged["gesture_actions"]
+        self.click_feedback_enabled = merged.get("click_feedback", True)
+        self.gesture_actions = dict(merged["gesture_actions"])
         self.calibration = merged["calibration"]
 
     @staticmethod
@@ -2313,6 +2730,7 @@ class HandCenterGestureController:
                 "duration": self.dwell_click_duration,
             },
             "gaze_detection_enabled": self.gaze_detection_enabled,
+            "click_feedback": self.click_feedback_enabled,
             "gesture_actions": self.gesture_actions,
             "language": _current_lang,
         }
@@ -2469,6 +2887,58 @@ class HandCenterGestureController:
         except OSError as e:
             return False, str(e), None
         return True, "", final
+
+    # ---- Click feedback + remappable gesture actions ----
+
+    def _emit_click(self, kind):
+        """Flash a click-feedback ripple at the current cursor (if enabled)."""
+        if self.overlay is None or not getattr(self, "click_feedback_enabled", True):
+            return
+        try:
+            x, y = pyautogui.position()
+            self.overlay.flash(x, y, kind)
+        except Exception:
+            pass
+
+    def _do_action(self, action):
+        """Perform a discrete click action (for the remappable pinch / fist
+        gestures) and flash matching feedback. 'none'/unknown is a no-op."""
+        try:
+            if action == "left_click":
+                pyautogui.click(); kind = "left"
+            elif action == "right_click":
+                pyautogui.rightClick(); kind = "right"
+            elif action == "double_click":
+                pyautogui.doubleClick(); kind = "left"
+            elif action == "middle_click":
+                pyautogui.middleClick(); kind = "left"
+            else:  # "none" or unrecognized
+                return
+        except Exception as e:
+            print(f"Action '{action}' failed: {e}")
+            return
+        self._emit_click(kind)
+
+    def _fatal_exit(self, title, message, settings_url=None, settings_label="Open Settings"):
+        """Stop tracking, then show a final error dialog and quit — without
+        re-entrant stacking. Called from inside the tracking tick on
+        unrecoverable camera/tracking loss; stopping the timer BEFORE the modal
+        dialog prevents the tick from re-firing during exec_() and piling up
+        dialogs (and trapping a user who has just lost their only pointer)."""
+        if getattr(self, "_fatal_shown", False):
+            return
+        self._fatal_shown = True
+        t = getattr(self, "_tracking_timer", None)
+        if t is not None:
+            t.stop()
+        try:
+            self._show_startup_error(title, message,
+                                     settings_url=settings_url,
+                                     settings_label=settings_label)
+        finally:
+            app = QApplication.instance()
+            if app is not None:
+                app.quit()
 
     def map_to_screen(self, hand_x, hand_y):
         """Map hand center coordinates to screen position using calibration bounding box,
@@ -2789,6 +3259,7 @@ class HandCenterGestureController:
 
             # Perform the scroll
             pyautogui.scroll(scroll_amount)
+            self._emit_click("scroll")
             print(f"📜 Two-finger scroll {direction} (movement: {self.scroll_accumulated:.3f})")
 
             # Reset accumulator but keep reference for continuous scrolling
@@ -2876,7 +3347,7 @@ class HandCenterGestureController:
                 any(recent_states[:-2]) and
                 current_time - self.last_action_time > self.action_cooldown):
 
-                pyautogui.rightClick()
+                self._do_action(self.gesture_actions.get("fist", "right_click"))
                 self.last_action_time = current_time
                 self._reset_dwell()
                 return "fist_right_click"
@@ -2902,6 +3373,7 @@ class HandCenterGestureController:
 
                     # Start drag
                     pyautogui.mouseDown(button='left')
+                    self._emit_click("drag")
                     self.is_dragging = True
                     self.last_action_time = current_time
 
@@ -2984,7 +3456,7 @@ class HandCenterGestureController:
                       current_time - self.last_action_time > self.action_cooldown):
 
                     try:
-                        pyautogui.click()
+                        self._do_action(self.gesture_actions.get("pinch", "left_click"))
                         self.last_action_time = current_time
                         print("🖱️ CLICK!")
                         self.pinch_start_time = None
@@ -3053,7 +3525,12 @@ class HandCenterGestureController:
                         (current_pos[0] - self.dwell_reference_pos[0]) ** 2 +
                         (current_pos[1] - self.dwell_reference_pos[1]) ** 2
                     )
-                    if dist > self.dwell_click_radius:
+                    # Re-arm hysteresis: once a dwell click has fired, the cursor
+                    # must move CLEARLY away (2x radius) before another can fire,
+                    # so an edge-of-radius tremor wobble can't repeat-click a target.
+                    exit_radius = (self.dwell_click_radius * 2.0
+                                   if self.dwell_triggered else self.dwell_click_radius)
+                    if dist > exit_radius:
                         # Cursor moved outside radius — reset
                         self.dwell_reference_pos = current_pos
                         self.dwell_start_time = current_time
@@ -3061,7 +3538,7 @@ class HandCenterGestureController:
                     elif not self.dwell_triggered and self.dwell_start_time is not None:
                         elapsed = current_time - self.dwell_start_time
                         if elapsed >= self.dwell_click_duration:
-                            pyautogui.click()
+                            self._do_action("left_click")
                             self.last_action_time = current_time
                             self.dwell_triggered = True
                             # Reset timer so moving cursor out and back allows another click
@@ -3278,7 +3755,7 @@ class HandCenterGestureController:
                         if sys.platform == "win32"
                         else None
                     )
-                    self._show_startup_error(
+                    self._fatal_exit(
                         S("crash_title"),
                         "AirPoint lost access to your camera.\n\n"
                         "Another app may have taken it (Zoom, Teams, FaceTime, etc.), "
@@ -3287,11 +3764,38 @@ class HandCenterGestureController:
                         settings_url=cam_url,
                         settings_label="Open Camera Settings",
                     )
-                    raise SystemExit(1)
+                    return
                 return
             self._cam_fail_count = 0
 
             frame = cv2.flip(frame, 1)
+
+            if self.paused:
+                # Parked: release any held action, reset latches so nothing fires
+                # on resume, and skip detection entirely (camera stays open).
+                if self.is_dragging:
+                    try:
+                        pyautogui.mouseUp(button='left')
+                    except Exception:
+                        pass
+                    self.is_dragging = False
+                self.pinch_start_time = None
+                self._pinch_active = False
+                self.drag_start_hand_pos = None
+                self.drag_start_screen_pos = None
+                self.prev_hand_center = None
+                self.smoothed_screen_pos = None
+                self._smoothed_pass2 = None
+                self._prev_raw_pos = None
+                self._last_output_pos = None
+                self.scroll_reference_y = None
+                self.scroll_accumulated = 0
+                self.scroll_exit_counter = 0
+                self.scroll_enter_counter = 0
+                self._reset_dwell()
+                self._last_gesture = "paused"
+                return
+
             rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
             hand_results = self.hands.process(rgb_frame)
@@ -3340,14 +3844,14 @@ class HandCenterGestureController:
             # If errors keep coming for ~2 seconds straight, something is
             # really wrong; show a dialog and exit cleanly.
             if self._tick_error_count >= 60:
-                self._show_startup_error(
+                self._fatal_exit(
                     S("crash_title"),
                     "AirPoint kept running into an error while tracking your hand.\n\n"
                     "Details have been saved to crash.log next to the app.\n"
                     "Please relaunch AirPoint, and if this keeps happening, email "
                     "kavinvenkatesanofficial@gmail.com with the crash.log file attached."
                 )
-                raise SystemExit(1)
+                return
 
     def run(self):
         """Main control loop using PyQt5 status panel."""
@@ -3382,16 +3886,28 @@ class HandCenterGestureController:
         self._last_gesture = "no_hand"
         panel = StatusPanel(self)
 
+        # Click-feedback overlay: transparent + click-through, always shown (it's
+        # invisible until a ripple fires; _emit_click gates on click_feedback_enabled).
+        self.overlay = ClickFeedbackOverlay()
+        self.overlay.show()
+
         # Tracking timer (~30fps)
         tracking_timer = QTimer()
         tracking_timer.setInterval(16)
         tracking_timer.timeout.connect(self._tracking_tick)
+        self._tracking_timer = tracking_timer  # reachable from _fatal_exit in the tick
 
         # Wire up panel buttons
         def on_recalibrate():
             tracking_timer.stop()
             panel.timer.stop()
             panel.hide()
+            # Close any open Settings/Profiles tool windows so they can't cover
+            # or race the calibration wizard.
+            for _attr in ('settings_panel', 'profiles_panel'):
+                _p = getattr(panel, _attr, None)
+                if _p is not None:
+                    _p.close()
             # Run recalibration WITHOUT nesting the application event loop.
             # A local QEventLoop returns here when the wizard closes (instead of
             # app.exec_(), whose quit would tear down the main loop), and
@@ -3417,10 +3933,13 @@ class HandCenterGestureController:
             tracking_timer.stop()
             panel.timer.stop()
             panel.close()
+            if self.overlay is not None:
+                self.overlay.close()
             app.quit()
 
         panel.recal_btn.clicked.connect(on_recalibrate)
         panel.quit_btn.clicked.connect(on_quit)
+        panel._on_close_quit = on_quit  # X-button / closeEvent also stops tracking
 
         panel.show()
         panel.start()
@@ -3435,6 +3954,8 @@ class HandCenterGestureController:
                 pass
 
         self.cap.release()
+        if self.overlay is not None:
+            self.overlay.close()
         print("AirPoint stopped.")
 
 if __name__ == "__main__":
