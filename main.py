@@ -55,8 +55,9 @@ if FROZEN:
 from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
                               QLabel, QPushButton, QLineEdit, QListWidget,
                               QStackedWidget, QProgressBar, QSizePolicy,
-                              QCheckBox)
-from PyQt5.QtCore import Qt, QTimer
+                              QCheckBox, QSlider, QInputDialog, QMessageBox,
+                              QListWidgetItem)
+from PyQt5.QtCore import Qt, QTimer, QEventLoop, pyqtSignal
 from PyQt5.QtGui import QImage, QPixmap, QFont
 
 # APP_DIR: when frozen, use the folder containing the exe, not the temp bundle dir
@@ -147,6 +148,29 @@ DEFAULT_CONFIG = {
         "open_hand": "cursor_move",
     },
 }
+
+# One-tap "pointer feel" presets. Each bundles the 7 comfort knobs the Settings
+# panel also exposes as sliders. Selecting a preset applies these live and the
+# Settings sliders move to match; nudging any slider puts you in "Custom".
+#   sensitivity      higher = bigger cursor jump per hand move (uncalibrated gain)
+#   smoothing_factor higher = steadier but laggier (EMA alpha)
+#   cursor_dead_zone higher = more resting-tremor suppression, coarser fine aim
+#   drag_threshold   seconds of held pinch before a drag starts
+#   action_cooldown  min seconds between discrete clicks (higher = fewer repeats)
+#   scroll_amount    scroll clicks per step (higher = faster)
+#   dwell_duration   seconds of stillness before an auto (hover) click
+PRESETS = {
+    "precise":     {"sensitivity": 1.8, "smoothing_factor": 0.80, "cursor_dead_zone": 16,
+                    "drag_threshold": 0.50, "action_cooldown": 0.25, "scroll_amount": 1, "dwell_duration": 2.0},
+    "balanced":    {"sensitivity": 2.5, "smoothing_factor": 0.65, "cursor_dead_zone": 10,
+                    "drag_threshold": 0.40, "action_cooldown": 0.15, "scroll_amount": 2, "dwell_duration": 1.5},
+    "fast":        {"sensitivity": 3.5, "smoothing_factor": 0.45, "cursor_dead_zone": 6,
+                    "drag_threshold": 0.25, "action_cooldown": 0.12, "scroll_amount": 3, "dwell_duration": 1.2},
+    "high_tremor": {"sensitivity": 1.5, "smoothing_factor": 0.88, "cursor_dead_zone": 24,
+                    "drag_threshold": 0.60, "action_cooldown": 0.60, "scroll_amount": 1, "dwell_duration": 2.5},
+}
+PRESET_LABELS = [("precise", "Precise"), ("balanced", "Balanced"),
+                 ("fast", "Fast"), ("high_tremor", "High tremor")]
 
 # ---------- Autostart ----------
 
@@ -500,6 +524,11 @@ class CameraWidget(QLabel):
 
 class SetupWizard(QWidget):
     """PyQt5 setup wizard for profile selection and calibration."""
+
+    # Emitted with the result ("completed"/"skipped"/"quit") when the wizard
+    # closes, so a caller can drive a local QEventLoop instead of nesting
+    # app.exec_() (which would tear down the whole app on recalibration).
+    finished = pyqtSignal(str)
 
     def __init__(self, controller):
         super().__init__()
@@ -1335,6 +1364,7 @@ class SetupWizard(QWidget):
         if self.result is None:
             self.result = "quit"
         event.accept()
+        self.finished.emit(self.result)
 
 
 class StatusPanel(QWidget):
@@ -1355,7 +1385,7 @@ class StatusPanel(QWidget):
         super().__init__()
         self.controller = controller
         self.setWindowTitle("AirPoint")
-        self.setFixedSize(360, 520)
+        self.setFixedSize(360, 600)
         self.setStyleSheet(DARK_STYLE + " StatusPanel { background-color: #1e1e23; }")
         self.setWindowFlags(Qt.WindowStaysOnTopHint | Qt.Tool)
 
@@ -1407,6 +1437,26 @@ class StatusPanel(QWidget):
 
         vbox.addStretch(1)
 
+        # ---- Settings / Profiles row ----
+        _SECONDARY = ("QPushButton { background-color: #2a2a32; color: #ccc; border: 2px solid #3a3a44;"
+                      " border-radius: 12px; font-size: 14px; } QPushButton:hover { background-color: #333340; }")
+        tools_row = QHBoxLayout()
+        self.settings_btn = QPushButton("⚙  Settings")
+        self.settings_btn.setCursor(Qt.PointingHandCursor)
+        self.settings_btn.setFixedHeight(44)
+        self.settings_btn.setStyleSheet(_SECONDARY)
+        self.settings_btn.clicked.connect(self._open_settings)
+        self.profiles_btn = QPushButton("👤  Profiles")
+        self.profiles_btn.setCursor(Qt.PointingHandCursor)
+        self.profiles_btn.setFixedHeight(44)
+        self.profiles_btn.setStyleSheet(_SECONDARY)
+        self.profiles_btn.clicked.connect(self._open_profiles)
+        tools_row.addWidget(self.settings_btn)
+        tools_row.addWidget(self.profiles_btn)
+        vbox.addLayout(tools_row)
+
+        vbox.addSpacing(8)
+
         # ---- Bottom actions ----
         self.recal_btn = QPushButton(S("panel_redo"))
         self.recal_btn.setCursor(Qt.PointingHandCursor)
@@ -1442,6 +1492,24 @@ class StatusPanel(QWidget):
     def _toggle_dwell(self):
         self.controller.toggle_dwell_click()
         self._update_status()
+
+    def _open_settings(self):
+        if getattr(self, 'settings_panel', None) is None:
+            self.settings_panel = SettingsPanel(self.controller)
+        else:
+            self.settings_panel._sync_from_controller()
+        self.settings_panel.show()
+        self.settings_panel.raise_()
+        self.settings_panel.activateWindow()
+
+    def _open_profiles(self):
+        if getattr(self, 'profiles_panel', None) is None:
+            self.profiles_panel = ProfilesPanel(self.controller)
+        else:
+            self.profiles_panel._refresh()
+        self.profiles_panel.show()
+        self.profiles_panel.raise_()
+        self.profiles_panel.activateWindow()
 
     def start(self):
         self._update_status()
@@ -1515,7 +1583,321 @@ class StatusPanel(QWidget):
 
     def closeEvent(self, event):
         self.timer.stop()
+        for attr in ('settings_panel', 'profiles_panel'):
+            p = getattr(self, attr, None)
+            if p is not None:
+                p.close()
         event.accept()
+
+
+class SettingsPanel(QWidget):
+    """Live tuning: pointer-feel presets + fine sliders. Every change applies
+    instantly to the running controller (the tracking loop reads these attrs
+    each frame); Save persists them to the active profile."""
+
+    SLIDER_QSS = """
+        QSlider::groove:horizontal { height: 6px; background: #2a2a30; border-radius: 3px; }
+        QSlider::sub-page:horizontal { background: #00dcc8; border-radius: 3px; }
+        QSlider::handle:horizontal { background: #00dcc8; width: 16px; margin: -6px 0; border-radius: 8px; }
+        QSlider::handle:horizontal:hover { background: #00f0d8; }
+    """
+    PRESET_ON = ("QPushButton { background:#1a3d38; color:#00e8a0; border:2px solid #00dcc8;"
+                 " border-radius:10px; font-size:12px; }")
+    PRESET_OFF = ("QPushButton { background:#2a2a32; color:#aaa; border:2px solid #3a3a44;"
+                  " border-radius:10px; font-size:12px; } QPushButton:hover { background:#333340; }")
+
+    # caption, controller attr, lo, hi, step, scale, is_int, value formatter
+    SLIDERS = [
+        ("Cursor speed",            "sensitivity",          0.5, 5.0,  0.1,  10,  False, lambda x: f"{x:.1f}x"),
+        ("Steadiness (smoothing)",  "smoothing_factor",     0.0, 0.95, 0.05, 100, False, lambda x: f"{int(round(x*100))}%"),
+        ("Ignore tiny movements",   "cursor_dead_zone",     0,   40,   1,    1,   True,  lambda x: f"{int(x)} px"),
+        ("Scroll speed",            "scroll_amount",        1,   10,   1,    1,   True,  lambda x: f"{int(x)}"),
+        ("Hold-to-drag time",       "drag_threshold",       0.2, 1.0,  0.05, 100, False, lambda x: f"{x:.2f}s"),
+        ("Time between clicks",     "action_cooldown",      0.1, 0.8,  0.05, 100, False, lambda x: f"{x:.2f}s"),
+        ("Hover-click time",        "dwell_click_duration", 0.5, 4.0,  0.1,  10,  False, lambda x: f"{x:.1f}s"),
+    ]
+
+    def __init__(self, controller, parent=None):
+        super().__init__(parent)
+        self.controller = controller
+        self._loading = False
+        self.setWindowTitle("AirPoint Settings")
+        # Fixed width, content-driven height so Save/Reset can never be clipped
+        # off the bottom under HiDPI / large-font scaling.
+        self.setFixedWidth(400)
+        self.setMinimumHeight(560)
+        self.setStyleSheet(DARK_STYLE + " SettingsPanel { background-color: #1e1e23; } " + self.SLIDER_QSS)
+        self.setWindowFlags(Qt.WindowStaysOnTopHint | Qt.Tool)
+
+        v = QVBoxLayout(self)
+        v.setContentsMargins(22, 18, 22, 16)
+        v.setSpacing(7)
+
+        header = QLabel("Settings")
+        header.setFont(QFont("Segoe UI", 18, QFont.Bold))
+        header.setStyleSheet("color: #00dcc8;")
+        v.addWidget(header)
+
+        # ---- Pointer-feel presets ----
+        v.addWidget(self._caption("Pointer feel"))
+        preset_row = QHBoxLayout()
+        preset_row.setSpacing(6)
+        self.preset_btns = {}
+        for key, label in PRESET_LABELS:
+            b = QPushButton(label)
+            b.setCursor(Qt.PointingHandCursor)
+            b.setFixedHeight(34)
+            b.clicked.connect(lambda _=False, k=key: self._on_preset(k))
+            self.preset_btns[key] = b
+            preset_row.addWidget(b)
+        v.addLayout(preset_row)
+        self.custom_lbl = QLabel("")
+        self.custom_lbl.setAlignment(Qt.AlignCenter)
+        self.custom_lbl.setStyleSheet("color:#888; font-size:11px;")
+        v.addWidget(self.custom_lbl)
+
+        # ---- Fine sliders ----
+        self.sliders = {}  # attr -> (slider, value_label, scale, is_int, fmt)
+        for caption, attr, lo, hi, step, scale, is_int, fmt in self.SLIDERS:
+            v.addWidget(self._caption(caption))
+            row = QHBoxLayout()
+            sl = QSlider(Qt.Horizontal)
+            sl.setMinimum(int(round(lo * scale)))
+            sl.setMaximum(int(round(hi * scale)))
+            sl.setSingleStep(max(1, int(round(step * scale))))
+            sl.setPageStep(max(1, int(round(step * scale))))
+            sl.setCursor(Qt.PointingHandCursor)
+            val = QLabel("")
+            val.setFixedWidth(56)
+            val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            val.setStyleSheet("color:#00dcc8; font-size:12px;")
+            sl.valueChanged.connect(lambda raw, a=attr: self._on_slider(a, raw))
+            row.addWidget(sl)
+            row.addWidget(val)
+            v.addLayout(row)
+            self.sliders[attr] = (sl, val, scale, is_int, fmt)
+
+        self.dwell_cb = QCheckBox("Auto-click by hovering (dwell)")
+        self.dwell_cb.toggled.connect(self._on_dwell_toggle)
+        v.addWidget(self.dwell_cb)
+
+        v.addStretch(1)
+
+        btn_row = QHBoxLayout()
+        reset_btn = QPushButton("Reset to defaults")
+        reset_btn.setObjectName("secondary")
+        reset_btn.setCursor(Qt.PointingHandCursor)
+        reset_btn.clicked.connect(self._on_reset)
+        self.save_btn = QPushButton("Save")
+        self.save_btn.setCursor(Qt.PointingHandCursor)
+        self.save_btn.clicked.connect(self._on_save)
+        btn_row.addWidget(reset_btn)
+        btn_row.addWidget(self.save_btn)
+        v.addLayout(btn_row)
+
+        self._sync_from_controller()
+
+        # Keep sliders/checkbox in sync if controller attrs change elsewhere
+        # (preset applied from another path, dwell toggled on the status panel,
+        # a live recalibration) while this panel stays open. The _loading guard
+        # makes the programmatic setValue calls side-effect-free, and setValue to
+        # the current value is a no-op so it won't fight an in-progress drag.
+        self._refresh_timer = QTimer(self)
+        self._refresh_timer.setInterval(300)
+        self._refresh_timer.timeout.connect(self._sync_from_controller)
+
+    def showEvent(self, event):
+        self._sync_from_controller()
+        self._refresh_timer.start()
+        super().showEvent(event)
+
+    def hideEvent(self, event):
+        self._refresh_timer.stop()
+        super().hideEvent(event)
+
+    def _caption(self, text):
+        lbl = QLabel(text)
+        lbl.setStyleSheet("color:#bbb; font-size:12px;")
+        return lbl
+
+    def _on_slider(self, attr, raw):
+        if self._loading:
+            return
+        sl, val, scale, is_int, fmt = self.sliders[attr]
+        real = int(round(raw / scale)) if is_int else raw / scale
+        setattr(self.controller, attr, real)
+        val.setText(fmt(real))
+        self._highlight_preset()
+
+    def _on_dwell_toggle(self, checked):
+        if self._loading:
+            return
+        self.controller.dwell_click_enabled = bool(checked)
+        self.controller._reset_dwell()
+
+    def _on_preset(self, key):
+        self.controller.apply_preset(key)
+        self._sync_from_controller()
+
+    def _sync_from_controller(self):
+        self._loading = True
+        for attr, (sl, val, scale, is_int, fmt) in self.sliders.items():
+            real = getattr(self.controller, attr)
+            sl.setValue(int(round(real * scale)))
+            val.setText(fmt(real))
+        self.dwell_cb.setChecked(bool(self.controller.dwell_click_enabled))
+        self._loading = False
+        self._highlight_preset()
+
+    def _highlight_preset(self):
+        active = self.controller.detect_preset()
+        for key, b in self.preset_btns.items():
+            b.setStyleSheet(self.PRESET_ON if key == active else self.PRESET_OFF)
+        self.custom_lbl.setText("Custom — your own tuning" if active == "custom" else "")
+
+    def _on_reset(self):
+        c = self.controller
+        c.sensitivity = DEFAULT_CONFIG["sensitivity"]
+        c.smoothing_factor = DEFAULT_CONFIG["smoothing_factor"]
+        th = DEFAULT_CONFIG["thresholds"]
+        c.cursor_dead_zone = th["cursor_dead_zone"]
+        c.scroll_amount = th["scroll_amount"]
+        c.drag_threshold = th["drag_threshold"]
+        c.action_cooldown = th["action_cooldown"]
+        c.dwell_click_duration = DEFAULT_CONFIG["dwell_click"]["duration"]
+        self._sync_from_controller()
+
+    def _on_save(self):
+        if self.controller.profile_name is not None:
+            self.controller.save_profile()
+        self.save_btn.setText("Saved ✓")
+        QTimer.singleShot(1200, lambda: self.save_btn.setText("Save"))
+
+
+class ProfilesPanel(QWidget):
+    """Manage saved profiles: switch, rename, duplicate, delete, set default."""
+
+    def __init__(self, controller, parent=None):
+        super().__init__(parent)
+        self.controller = controller
+        self.setWindowTitle("AirPoint Profiles")
+        self.setFixedSize(360, 470)
+        self.setStyleSheet(DARK_STYLE + " ProfilesPanel { background-color: #1e1e23; }")
+        self.setWindowFlags(Qt.WindowStaysOnTopHint | Qt.Tool)
+
+        v = QVBoxLayout(self)
+        v.setContentsMargins(22, 18, 22, 16)
+        v.setSpacing(10)
+
+        header = QLabel("Profiles")
+        header.setFont(QFont("Segoe UI", 18, QFont.Bold))
+        header.setStyleSheet("color: #00dcc8;")
+        v.addWidget(header)
+
+        self.listw = QListWidget()
+        self.listw.setStyleSheet(
+            "QListWidget { background:#2a2a32; color:#eee; border:1px solid #3a3a44;"
+            " border-radius:8px; font-size:14px; padding:4px; }"
+            " QListWidget::item { padding:6px; }"
+            " QListWidget::item:selected { background:#1a3d38; color:#00e8a0; }")
+        v.addWidget(self.listw, 1)
+
+        def mkbtn(text, slot, danger=False):
+            b = QPushButton(text)
+            b.setCursor(Qt.PointingHandCursor)
+            if danger:
+                b.setStyleSheet("QPushButton { background:#3a2020; color:#ff7777; border:2px solid #552a2a;"
+                                " border-radius:10px; padding:8px; } QPushButton:hover { background:#4a2a2a; }")
+            else:
+                b.setObjectName("secondary")
+            b.clicked.connect(slot)
+            return b
+
+        row1 = QHBoxLayout()
+        row1.addWidget(mkbtn("Switch to", self._switch))
+        row1.addWidget(mkbtn("Set default", self._set_default))
+        v.addLayout(row1)
+        row2 = QHBoxLayout()
+        row2.addWidget(mkbtn("Rename", self._rename))
+        row2.addWidget(mkbtn("Duplicate", self._duplicate))
+        v.addLayout(row2)
+        v.addWidget(mkbtn("Delete", self._delete, danger=True))
+
+        self._refresh()
+
+    def _selected(self):
+        it = self.listw.currentItem()
+        return it.data(Qt.UserRole) if it is not None else None
+
+    def _refresh(self, select=None):
+        self.listw.clear()
+        default = HandCenterGestureController.get_default_profile()
+        active = self.controller.profile_name
+        for name in self.controller.list_profiles():
+            tags = []
+            if name == active:
+                tags.append("active")
+            if name == default:
+                tags.append("default")
+            label = name + (f"   ({', '.join(tags)})" if tags else "")
+            item = QListWidgetItem(label)
+            item.setData(Qt.UserRole, name)
+            self.listw.addItem(item)
+            if name == (select or active):
+                self.listw.setCurrentItem(item)
+
+    def _warn(self, msg):
+        QMessageBox.warning(self, "AirPoint", msg)
+
+    def _switch(self):
+        name = self._selected()
+        if not name or name == self.controller.profile_name:
+            return
+        if self.controller.load_profile(name):
+            self._refresh()  # StatusPanel's own timer will refresh its label
+
+    def _set_default(self):
+        name = self._selected()
+        if name and HandCenterGestureController.set_default_profile(name):
+            self._refresh()
+
+    def _rename(self):
+        name = self._selected()
+        if not name:
+            return
+        new, ok = QInputDialog.getText(self, "Rename profile", "New name:", text=name)
+        if not ok:
+            return
+        ok2, msg, final = self.controller.rename_profile(name, new)
+        if not ok2:
+            self._warn(msg)
+        else:
+            self._refresh(select=final)
+
+    def _duplicate(self):
+        name = self._selected()
+        if not name:
+            return
+        ok, msg, final = self.controller.duplicate_profile(name)
+        if not ok:
+            self._warn(msg)
+        else:
+            self._refresh(select=final)
+
+    def _delete(self):
+        name = self._selected()
+        if not name:
+            return
+        resp = QMessageBox.question(
+            self, "Delete profile", f"Delete profile '{name}'? This can't be undone.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if resp != QMessageBox.Yes:
+            return
+        ok, msg = self.controller.delete_profile(name)
+        if not ok:
+            self._warn(msg)
+        else:
+            self._refresh()
 
 
 class HandCenterGestureController:
@@ -1692,6 +2074,7 @@ class HandCenterGestureController:
 
         # Gesture state (not configurable — runtime state)
         self.pinch_start_time = None
+        self._pinch_active = False  # Schmitt-trigger latch for pinch hysteresis
         self.is_dragging = False
         self.drag_start_hand_pos = None
         self.drag_start_screen_pos = None
@@ -1703,6 +2086,7 @@ class HandCenterGestureController:
         self.scroll_reference_y = None
         self.scroll_accumulated = 0
         self.scroll_exit_counter = 0
+        self.scroll_enter_counter = 0  # consecutive in-pose frames before scroll arms
 
         # Profile tracking
         self.profile_name = None
@@ -1870,6 +2254,24 @@ class HandCenterGestureController:
         self.dwell_start_time = None
         self.dwell_triggered = False
 
+        # Reset gesture runtime latches too, so switching profiles live (Profiles
+        # panel) can't strand a held mouse button or carry stale pinch/scroll
+        # pose state into the new profile (mirrors the hand-lost cleanup).
+        if getattr(self, "is_dragging", False):
+            try:
+                pyautogui.mouseUp(button="left")
+            except Exception:
+                pass
+            self.is_dragging = False
+        self.pinch_start_time = None
+        self._pinch_active = False
+        self.drag_start_hand_pos = None
+        self.drag_start_screen_pos = None
+        self.scroll_reference_y = None
+        self.scroll_accumulated = 0
+        self.scroll_exit_counter = 0
+        self.scroll_enter_counter = 0
+
         # Print summary
         cal = self.calibration
         if cal and all(k in cal for k in ('left', 'right', 'top', 'bottom')):
@@ -1918,6 +2320,155 @@ class HandCenterGestureController:
         with open(path, "w") as f:
             json.dump(config, f, indent=2)
         print(f"Profile '{self.profile_name}' saved to {path}")
+
+    # ---- Sensitivity presets ----
+
+    def apply_preset(self, name):
+        """Apply a named 'pointer feel' preset to the live attributes and persist."""
+        preset = PRESETS.get(name)
+        if preset is None:
+            return False
+        self.sensitivity = preset["sensitivity"]
+        self.smoothing_factor = preset["smoothing_factor"]
+        self.cursor_dead_zone = preset["cursor_dead_zone"]
+        self.drag_threshold = preset["drag_threshold"]
+        self.action_cooldown = preset["action_cooldown"]
+        self.scroll_amount = preset["scroll_amount"]
+        self.dwell_click_duration = preset["dwell_duration"]
+        # Reset smoothing / dead-zone state so the new alpha & radius start clean.
+        self.smoothed_screen_pos = None
+        self._smoothed_pass2 = None
+        self._prev_raw_pos = None
+        self._last_output_pos = None
+        if self.profile_name is not None:
+            self.save_profile()
+        print(f"Preset applied: {name}")
+        return True
+
+    def detect_preset(self):
+        """Return the preset key matching the current live values, else 'custom'."""
+        def close(a, b):
+            return abs(float(a) - float(b)) < 1e-6
+        for key, p in PRESETS.items():
+            if (close(self.sensitivity, p["sensitivity"]) and
+                    close(self.smoothing_factor, p["smoothing_factor"]) and
+                    close(self.cursor_dead_zone, p["cursor_dead_zone"]) and
+                    close(self.drag_threshold, p["drag_threshold"]) and
+                    close(self.action_cooldown, p["action_cooldown"]) and
+                    int(self.scroll_amount) == int(p["scroll_amount"]) and
+                    close(self.dwell_click_duration, p["dwell_duration"])):
+                return key
+        return "custom"
+
+    # ---- Profile management (rename / delete / duplicate / default) ----
+
+    @staticmethod
+    def _sanitize_name(raw):
+        """Clean a user-supplied profile name (same rule as the setup wizard)."""
+        name = "".join(c for c in str(raw) if c.isalnum() or c in " _-").strip()
+        return name[:20].strip() or "default"
+
+    @staticmethod
+    def _default_ptr_path():
+        return os.path.join(PROFILES_DIR, "default_profile.txt")
+
+    @staticmethod
+    def get_default_profile():
+        try:
+            with open(HandCenterGestureController._default_ptr_path(), "r", encoding="utf-8") as f:
+                name = f.read().strip()
+        except OSError:
+            return None
+        if name and os.path.exists(os.path.join(PROFILES_DIR, f"{name}.json")):
+            return name
+        return None
+
+    @staticmethod
+    def set_default_profile(name):
+        if not os.path.exists(os.path.join(PROFILES_DIR, f"{name}.json")):
+            return False
+        try:
+            os.makedirs(PROFILES_DIR, exist_ok=True)
+            with open(HandCenterGestureController._default_ptr_path(), "w", encoding="utf-8") as f:
+                f.write(name)
+            return True
+        except OSError:
+            return False
+
+    @staticmethod
+    def clear_default_profile():
+        try:
+            os.remove(HandCenterGestureController._default_ptr_path())
+        except OSError:
+            pass
+
+    def delete_profile(self, name):
+        """Delete a profile file. Returns (ok, message)."""
+        if name == self.profile_name:
+            return False, "Can't delete the profile you're currently using."
+        path = os.path.join(PROFILES_DIR, f"{name}.json")
+        if not os.path.exists(path):
+            return False, "That profile no longer exists."
+        try:
+            os.remove(path)
+        except OSError as e:
+            return False, str(e)
+        if HandCenterGestureController.get_default_profile() == name:
+            HandCenterGestureController.clear_default_profile()
+        return True, ""
+
+    def rename_profile(self, old, new):
+        """Rename a profile. Returns (ok, message, final_name)."""
+        new_name = self._sanitize_name(new)
+        src = os.path.join(PROFILES_DIR, f"{old}.json")
+        if not os.path.exists(src):
+            return False, "That profile no longer exists.", old
+        if new_name == old:
+            return True, "", old  # no change
+        case_only = new_name.lower() == old.lower()
+        dst = os.path.join(PROFILES_DIR, f"{new_name}.json")
+        if os.path.exists(dst) and not case_only:
+            return False, f"A profile named '{new_name}' already exists.", old
+        try:
+            if case_only:  # two-step for case-insensitive filesystems (Win/macOS)
+                tmp = os.path.join(PROFILES_DIR, f"{old}.__tmp__.json")
+                if os.path.exists(tmp):
+                    os.remove(tmp)  # clear any stale temp from a prior failure
+                os.rename(src, tmp)
+                os.rename(tmp, dst)
+            else:
+                os.rename(src, dst)
+        except OSError as e:
+            return False, str(e), old
+        if self.profile_name == old:
+            self.profile_name = new_name
+        if HandCenterGestureController.get_default_profile() == old:
+            HandCenterGestureController.set_default_profile(new_name)
+        return True, "", new_name
+
+    def duplicate_profile(self, name, newname=None):
+        """Copy a profile to a new, non-colliding name. Returns (ok, message, new_name)."""
+        src = os.path.join(PROFILES_DIR, f"{name}.json")
+        if not os.path.exists(src):
+            return False, "That profile no longer exists.", None
+        base = self._sanitize_name(newname) if newname else self._sanitize_name(f"{name} copy")
+        final, i = base, 2
+        while os.path.exists(os.path.join(PROFILES_DIR, f"{final}.json")):
+            # Reserve room for the suffix so _sanitize_name's 20-char cap can't
+            # truncate it away (which would spin the loop on a long base name).
+            suffix = f" {i}"
+            final = self._sanitize_name(base[:20 - len(suffix)].rstrip() + suffix)
+            i += 1
+            if i > 99:
+                return False, "Couldn't find a free name.", None
+        try:
+            with open(src, "r", encoding="utf-8") as f:
+                data = f.read()
+            with open(os.path.join(PROFILES_DIR, f"{final}.json"), "w", encoding="utf-8") as f:
+                f.write(data)
+        except OSError as e:
+            return False, str(e), None
+        return True, "", final
 
     def map_to_screen(self, hand_x, hand_y):
         """Map hand center coordinates to screen position using calibration bounding box,
@@ -1979,17 +2530,30 @@ class HandCenterGestureController:
             self._smoothed_pass2[0] = alpha2 * self._smoothed_pass2[0] + (1 - alpha2) * self.smoothed_screen_pos[0]
             self._smoothed_pass2[1] = alpha2 * self._smoothed_pass2[1] + (1 - alpha2) * self.smoothed_screen_pos[1]
 
-        # Dead-zone filter: ignore micro-movements below threshold
+        # Radial dead-zone with a soft ease-out. Inside `inner` the cursor holds
+        # still (kills resting tremor). Between inner and outer it eases out
+        # proportionally instead of snapping when the boundary is crossed, so a
+        # shaky hand can settle onto a small target instead of getting stuck just
+        # shy of it. Beyond outer the smoothed position passes straight through.
+        # (Replaces the old anisotropic dx<dz AND dy<dz square latch.)
+        target_x, target_y = self._smoothed_pass2[0], self._smoothed_pass2[1]
         if self._last_output_pos is not None:
-            dx = abs(self._smoothed_pass2[0] - self._last_output_pos[0])
-            dy = abs(self._smoothed_pass2[1] - self._last_output_pos[1])
-            if dx < self.cursor_dead_zone and dy < self.cursor_dead_zone:
+            dx = target_x - self._last_output_pos[0]
+            dy = target_y - self._last_output_pos[1]
+            dist = math.hypot(dx, dy)
+            inner = self.cursor_dead_zone
+            outer = 2.0 * self.cursor_dead_zone
+            if dist < inner:
                 return self._last_output_pos[0], self._last_output_pos[1]
+            elif dist < outer:
+                frac = (dist - inner) / (outer - inner)
+                target_x = self._last_output_pos[0] + dx * frac
+                target_y = self._last_output_pos[1] + dy * frac
 
         # Clamp to screen bounds with margin
         m = self.screen_edge_margin
-        screen_x = max(m, min(self.screen_width - m, self._smoothed_pass2[0]))
-        screen_y = max(m, min(self.screen_height - m, self._smoothed_pass2[1]))
+        screen_x = max(m, min(self.screen_width - m, target_x))
+        screen_y = max(m, min(self.screen_height - m, target_y))
         self._last_output_pos = [screen_x, screen_y]
         return screen_x, screen_y
 
@@ -2158,6 +2722,8 @@ class HandCenterGestureController:
         )
 
         if not is_two_finger_pose:
+            # Out of pose — require a fresh run of in-pose frames before re-arming.
+            self.scroll_enter_counter = 0
             # Only reset if we've been out of pose for a bit (sticky mode)
             if not hasattr(self, 'scroll_exit_counter'):
                 self.scroll_exit_counter = 0
@@ -2181,8 +2747,16 @@ class HandCenterGestureController:
         middle_tip_y = landmarks[12][1]  # Middle fingertip
         current_fingers_y = (index_tip_y + middle_tip_y) / 2
 
-        # Initialize reference position on first detection
+        # Initialize reference position on first detection — but only after a
+        # short entry debounce. Exit already has a 3-frame grace; entry used to
+        # be instant, so a single mis-classified frame (mid-pinch, hand reshaping)
+        # could hijack the cursor into scroll mode and capture a bogus reference.
+        # Require 2 consecutive in-pose frames before arming; until then keep
+        # cursor control (return False).
         if self.scroll_reference_y is None:
+            self.scroll_enter_counter += 1
+            if self.scroll_enter_counter < 2:
+                return False
             self.scroll_reference_y = current_fingers_y
             self.scroll_accumulated = 0
             print("📱 Two-finger scroll mode activated")
@@ -2258,6 +2832,8 @@ class HandCenterGestureController:
             self._smoothed_pass2 = None
             self._prev_raw_pos = None
             self._last_output_pos = None
+            self._pinch_active = False
+            self.scroll_enter_counter = 0
             self.dwell_reference_pos = None
             self.dwell_start_time = None
             self.dwell_triggered = False
@@ -2272,9 +2848,21 @@ class HandCenterGestureController:
         thumb_tip = landmarks[4]
         index_tip = landmarks[8]
 
-        # Calculate pinch
+        # Calculate pinch — with Schmitt-trigger hysteresis. Enter the pinched
+        # state below the threshold, but only LEAVE it once the fingers open past
+        # threshold * 1.25. A single hard compare made a hand resting near the
+        # threshold flicker pinched/unpinched every frame, firing false clicks and
+        # flickering drag start/stop — the hysteresis band absorbs that jitter.
         pinch_distance = self.calculate_distance(thumb_tip, index_tip)
-        is_pinched = self.pinch_threshold is not None and pinch_distance < self.pinch_threshold
+        if self.pinch_threshold is None:
+            self._pinch_active = False
+        elif self._pinch_active:
+            if pinch_distance > self.pinch_threshold * 1.25:
+                self._pinch_active = False
+        else:
+            if pinch_distance < self.pinch_threshold:
+                self._pinch_active = True
+        is_pinched = self._pinch_active
 
         extended_count, finger_states = self.count_extended_fingers(landmarks)
 
@@ -2714,7 +3302,8 @@ class HandCenterGestureController:
             if hand_results.multi_hand_landmarks:
                 for hand_landmarks in hand_results.multi_hand_landmarks:
                     landmarks = self.get_landmarks(hand_landmarks)
-                    extended_count, finger_states = self.count_extended_fingers(landmarks)
+                    # detect_gestures computes its own finger states; the extra
+                    # count_extended_fingers call here was discarded every frame.
                     gesture = self.detect_gestures(landmarks)
             else:
                 # Clean up when hand lost
@@ -2726,6 +3315,7 @@ class HandCenterGestureController:
                     self.is_dragging = False
 
                 self.pinch_start_time = None
+                self._pinch_active = False
                 self.drag_start_hand_pos = None
                 self.drag_start_screen_pos = None
                 self.prev_hand_center = None
@@ -2736,6 +3326,7 @@ class HandCenterGestureController:
                 self.scroll_reference_y = None
                 self.scroll_accumulated = 0
                 self.scroll_exit_counter = 0
+                self.scroll_enter_counter = 0
                 self._reset_dwell()
 
             self._last_gesture = gesture
@@ -2765,6 +3356,17 @@ class HandCenterGestureController:
         app = QApplication.instance() or QApplication(sys.argv)
 
         # --- Profile selection / calibration phase ---
+        # If the user marked a profile as default (Profiles panel), auto-load it
+        # and skip the picker. First-time users (no default set) still see the wizard.
+        if self.profile_name is None:
+            default = self.get_default_profile()
+            if default and self.load_profile(default):
+                if self.calibration is None:
+                    # Default profile was never calibrated — don't trap the user
+                    # in its calibration flow; fall back to the normal picker.
+                    self.profile_name = None
+                else:
+                    print(f"Auto-loaded default profile '{default}'.")
         if self.profile_name is not None and self.calibration is not None:
             print(f"Using pre-loaded profile '{self.profile_name}'.")
         else:
@@ -2790,11 +3392,22 @@ class HandCenterGestureController:
             tracking_timer.stop()
             panel.timer.stop()
             panel.hide()
+            # Run recalibration WITHOUT nesting the application event loop.
+            # A local QEventLoop returns here when the wizard closes (instead of
+            # app.exec_(), whose quit would tear down the main loop), and
+            # disabling auto-quit stops Qt from quitting the whole app when the
+            # wizard closes while the panel is hidden — the cause of the
+            # "restart setup quits the app" crash.
+            prev_quit = app.quitOnLastWindowClosed()
+            app.setQuitOnLastWindowClosed(False)
             wizard = SetupWizard(self)
+            loop = QEventLoop()
+            wizard.finished.connect(lambda _result: loop.quit())
             wizard.show()
-            app.exec_()
+            loop.exec_()
+            app.setQuitOnLastWindowClosed(prev_quit)
             if wizard.result == "quit":
-                app.quit()
+                on_quit()
                 return
             panel.show()
             panel.start()
