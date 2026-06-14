@@ -2298,6 +2298,68 @@ class ClickFeedbackOverlay(QWidget):
                 pass
 
 
+class _BenchLog:
+    """Opt-in per-frame benchmark logger (enabled by --benchmark, inert otherwise).
+    Records per-stage latency, FPS basis, hand-detection, raw-vs-smoothed cursor
+    position (for jitter), and CPU/RAM, then writes a CSV that bench/analyze.py
+    turns into latency / FPS / jitter-RMS / detection-rate figures."""
+
+    def __init__(self, out_path, duration_s):
+        self.out_path = out_path
+        self.duration = float(duration_s)
+        self.t_start = time.perf_counter()
+        self.rows = []
+        self._last_sample = 0.0
+        self._cpu = 0.0
+        self._mem = 0.0
+        try:
+            import psutil
+            self._proc = psutil.Process()
+            self._proc.cpu_percent(None)  # prime the % meter
+        except Exception:
+            self._proc = None  # psutil optional; cpu/mem columns stay blank
+
+    def record(self, t0, t1, t2, t3, detected, raw, out):
+        now = time.perf_counter()
+        if self._proc is not None and (now - self._last_sample) > 0.25:
+            try:
+                self._cpu = self._proc.cpu_percent(None)
+                self._mem = self._proc.memory_info().rss / (1024 * 1024)
+            except Exception:
+                pass
+            self._last_sample = now
+        self.rows.append({
+            "t_rel": round(now - self.t_start, 4),
+            "capture_ms": round((t1 - t0) * 1000.0, 3),
+            "inference_ms": round((t2 - t1) * 1000.0, 3),
+            "post_ms": round((t3 - t2) * 1000.0, 3),
+            "total_ms": round((t3 - t0) * 1000.0, 3),
+            "detected": int(bool(detected)),
+            "raw_x": "" if raw is None else round(raw[0], 2),
+            "raw_y": "" if raw is None else round(raw[1], 2),
+            "out_x": "" if out is None else round(out[0], 2),
+            "out_y": "" if out is None else round(out[1], 2),
+            "cpu_pct": round(self._cpu, 1) if self._proc else "",
+            "mem_mb": round(self._mem, 1) if self._proc else "",
+        })
+
+    def done(self):
+        return (time.perf_counter() - self.t_start) >= self.duration
+
+    def save(self):
+        if not self.rows:
+            return None
+        import csv as _csv
+        d = os.path.dirname(self.out_path)
+        if d:
+            os.makedirs(d, exist_ok=True)
+        with open(self.out_path, "w", newline="", encoding="utf-8") as f:
+            w = _csv.DictWriter(f, fieldnames=list(self.rows[0].keys()))
+            w.writeheader()
+            w.writerows(self.rows)
+        return self.out_path
+
+
 class HandCenterGestureController:
     @staticmethod
     def _show_startup_error(title, message, settings_url=None, settings_label="Open Settings"):
@@ -2481,6 +2543,9 @@ class HandCenterGestureController:
         self.fist_history = deque(maxlen=8)
         self.overlay = None  # ClickFeedbackOverlay, created in run() once a QApplication exists
         self.paused = False  # when True the tracking tick does no detection/cursor control
+        self._bench = None          # _BenchLog while --benchmark is active
+        self._bench_seconds = 0     # >0 enables benchmark logging in run()
+        self._bench_out = None      # optional CSV path for --benchmark
 
         # Two-finger scroll state
         self.scroll_reference_y = None
@@ -3744,6 +3809,9 @@ class HandCenterGestureController:
         or OpenCV should never crash the whole app.
         """
         try:
+            _bench = self._bench
+            _t0 = time.perf_counter() if _bench is not None else 0.0
+            _t1 = _t2 = 0.0
             ret, frame = self.cap.read()
             if not ret:
                 self._cam_fail_count = getattr(self, '_cam_fail_count', 0) + 1
@@ -3769,6 +3837,8 @@ class HandCenterGestureController:
             self._cam_fail_count = 0
 
             frame = cv2.flip(frame, 1)
+            if _bench is not None:
+                _t1 = time.perf_counter()
 
             if self.paused:
                 # Parked: release any held action, reset latches so nothing fires
@@ -3799,6 +3869,8 @@ class HandCenterGestureController:
             rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
             hand_results = self.hands.process(rgb_frame)
+            if _bench is not None:
+                _t2 = time.perf_counter()
             self.detect_face_and_gaze(frame)
 
             gesture = "no_hand"
@@ -3832,6 +3904,20 @@ class HandCenterGestureController:
                 self.scroll_exit_counter = 0
                 self.scroll_enter_counter = 0
                 self._reset_dwell()
+
+            if _bench is not None:
+                _bench.record(_t0, _t1, _t2, time.perf_counter(),
+                              bool(hand_results.multi_hand_landmarks),
+                              self._prev_raw_pos, self._last_output_pos)
+                if _bench.done():
+                    _p = _bench.save()
+                    print(f"[benchmark] complete: {len(_bench.rows)} frames -> {_p}")
+                    self._bench = None
+                    if getattr(self, '_tracking_timer', None) is not None:
+                        self._tracking_timer.stop()
+                    _app = QApplication.instance()
+                    if _app is not None:
+                        _app.quit()
 
             self._last_gesture = gesture
             self._tick_error_count = 0
@@ -3896,6 +3982,12 @@ class HandCenterGestureController:
         tracking_timer.setInterval(16)
         tracking_timer.timeout.connect(self._tracking_tick)
         self._tracking_timer = tracking_timer  # reachable from _fatal_exit in the tick
+
+        if self._bench_seconds:
+            out = self._bench_out or os.path.join(APP_DIR, "bench",
+                                                  f"trace_{int(time.time())}.csv")
+            self._bench = _BenchLog(out, self._bench_seconds)
+            print(f"[benchmark] logging ~{self._bench_seconds:.0f}s of frames -> {out}")
 
         # Wire up panel buttons
         def on_recalibrate():
@@ -3976,6 +4068,12 @@ if __name__ == "__main__":
                         help="Start with dwell-click enabled")
     parser.add_argument("--generate-default", action="store_true",
                         help="Write default.json to profiles/ directory and exit")
+    parser.add_argument("--benchmark", type=float, default=0, metavar="SECONDS",
+                        help="Log per-frame latency/FPS/jitter/detection for N seconds "
+                             "to a CSV (bench/analyze.py reads it), then exit. Needs psutil "
+                             "for CPU/RAM. See bench/METHODS.md.")
+    parser.add_argument("--benchmark-out", type=str, default=None,
+                        help="CSV path for --benchmark (default: bench/trace_<ts>.csv)")
     args = parser.parse_args()
 
     if args.generate_default:
@@ -3992,6 +4090,10 @@ if __name__ == "__main__":
 
         if args.dwell:
             controller.dwell_click_enabled = True
+
+        if args.benchmark:
+            controller._bench_seconds = args.benchmark
+            controller._bench_out = args.benchmark_out
 
         if args.profile:
             if not controller.load_profile(args.profile):
