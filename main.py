@@ -92,6 +92,7 @@ def show_crash_dialog(exc_type, exc_value, exc_tb):
     try:
         from PyQt5.QtWidgets import QApplication, QMessageBox
         app = QApplication.instance() or QApplication(sys.argv)
+        apply_app_theme(app)
         msg = QMessageBox()
         msg.setIcon(QMessageBox.Critical)
         msg.setWindowTitle(S("crash_title"))
@@ -101,13 +102,13 @@ def show_crash_dialog(exc_type, exc_value, exc_tb):
             short = short[:200] + "..."
         msg.setInformativeText(short)
         msg.setDetailedText("".join(traceback.format_exception(exc_type, exc_value, exc_tb)))
-        msg.setStyleSheet("""
-            QMessageBox { background-color: #1e1e23; color: #ddd; }
-            QLabel { color: #ddd; font-size: 13px; }
-            QPushButton { background-color: #2a2a32; color: #ddd; border: 1px solid #444;
-                          border-radius: 6px; padding: 6px 18px; min-width: 80px; }
-            QPushButton:hover { background-color: #3a3a44; }
-            QTextEdit { background-color: #111; color: #ccc; font-family: monospace; font-size: 11px; }
+        msg.setStyleSheet(f"""
+            QMessageBox {{ background-color: {T.bg}; color: {T.text}; }}
+            QLabel {{ color: {T.text}; font-size: 13px; }}
+            QPushButton {{ background-color: {T.surface}; color: {T.text}; border: 1px solid {T.border};
+                          border-radius: 6px; padding: 6px 18px; min-width: 80px; }}
+            QPushButton:hover {{ background-color: {T.surface_hover}; }}
+            QTextEdit {{ background-color: {T.camera_bg}; color: {T.text2}; font-family: monospace; font-size: 11px; }}
         """)
         msg.exec_()
     except Exception:
@@ -312,13 +313,14 @@ STRINGS = {
         "cal_hint_dir": "Press the spacebar when your hand is as far {dir} as comfortable",
         "cal_hint_steady": "Just wait — the camera is watching your hand",
         "cal_steady_inst": "Hold your hand still and relax",
-        "cal_pinch_inst": "Pinch your thumb and the finger next to it together",
-        "cal_fist_inst": "Make a fist — close all your fingers",
-        "cal_hint_gesture": "Press spacebar to record  or  press N to skip",
+        "cal_pinch_inst": "Pinch your thumb and the finger next to it together — and keep holding it",
+        "cal_fist_inst": "Make a fist — close all your fingers and keep holding it",
+        "cal_hint_gesture": "While holding the gesture, tap spacebar to record  (or press N to skip)",
         "cal_hold_still": "Hold still...",
         "cal_hand_lost": "Hand lost — try again",
         "cal_show_hand": "Show your hand to begin",
-        "cal_recording": "Recording... hold the gesture",
+        "cal_recording": "Recording — keep holding the gesture until the bar fills",
+        "cal_gesture_retry": "Didn't catch that — make the gesture and tap spacebar again",
         # Done page
         "done_title": "You're all set!",
         "done_subtitle": "AirPoint is ready. Here's a quick reminder:",
@@ -413,13 +415,14 @@ STRINGS = {
         "cal_hint_dir": "जब हाथ {dir} तक पहुँच जाए तो स्पेसबार दबाएँ",
         "cal_hint_steady": "बस रुकें — कैमरा आपका हाथ देख रहा है",
         "cal_steady_inst": "अपना हाथ स्थिर रखें और आराम करें",
-        "cal_pinch_inst": "अंगूठे और बगल वाली उँगली को जोड़ें",
-        "cal_fist_inst": "मुट्ठी बंद करें — सारी उँगलियाँ बंद",
-        "cal_hint_gesture": "स्पेसबार दबाएँ रिकॉर्ड के लिए  या  N दबाएँ छोड़ने के लिए",
+        "cal_pinch_inst": "अंगूठे और बगल वाली उँगली को जोड़ें — और ऐसे ही पकड़े रहें",
+        "cal_fist_inst": "मुट्ठी बंद करें — सारी उँगलियाँ बंद रखें और पकड़े रहें",
+        "cal_hint_gesture": "इशारा बनाए रखते हुए स्पेसबार दबाएँ रिकॉर्ड के लिए  (या N दबाएँ छोड़ने के लिए)",
         "cal_hold_still": "स्थिर रहें...",
         "cal_hand_lost": "हाथ नहीं दिखा — फिर कोशिश करें",
         "cal_show_hand": "अपना हाथ दिखाएँ",
-        "cal_recording": "रिकॉर्ड हो रहा है... हाथ ऐसे ही रखें",
+        "cal_recording": "रिकॉर्ड हो रहा है — बार भरने तक इशारा ऐसे ही रखें",
+        "cal_gesture_retry": "पकड़ नहीं पाया — इशारा बनाकर फिर स्पेसबार दबाएँ",
         # Done page
         "done_title": "सब तैयार है!",
         "done_subtitle": "AirPoint तैयार है। याद रखें:",
@@ -509,13 +512,14 @@ STRINGS = {
         "cal_hint_dir": "സുഖമായി {dir} ഭാഗത്തേക്ക് കൈ എത്തുമ്പോൾ സ്പെയ്സ്ബാർ അമർത്തൂ",
         "cal_hint_steady": "കാത്തിരിക്കൂ — ക്യാമറ നിങ്ങളുടെ കൈ നോക്കുന്നു",
         "cal_steady_inst": "കൈ അനക്കാതെ ശാന്തമായി പിടിക്കൂ",
-        "cal_pinch_inst": "തള്ളവിരലും അടുത്ത വിരലും ചേർത്ത് നുള്ളൂ",
-        "cal_fist_inst": "മുഷ്ടി ചുരുട്ടൂ — എല്ലാ വിരലുകളും അടയ്ക്കൂ",
-        "cal_hint_gesture": "റെക്കോർഡ് ചെയ്യാൻ സ്പെയ്സ്ബാർ  അല്ലെങ്കിൽ  ഒഴിവാക്കാൻ N",
+        "cal_pinch_inst": "തള്ളവിരലും അടുത്ത വിരലും ചേർത്ത് നുള്ളൂ — അങ്ങനെ പിടിച്ചുനിർത്തൂ",
+        "cal_fist_inst": "മുഷ്ടി ചുരുട്ടൂ — എല്ലാ വിരലുകളും അടച്ച് പിടിച്ചുനിർത്തൂ",
+        "cal_hint_gesture": "ആംഗ്യം പിടിച്ചുകൊണ്ട് റെക്കോർഡ് ചെയ്യാൻ സ്പെയ്സ്ബാർ അമർത്തൂ  (ഒഴിവാക്കാൻ N)",
         "cal_hold_still": "അനക്കാതെ പിടിക്കൂ...",
         "cal_hand_lost": "കൈ കണ്ടില്ല — വീണ്ടും ശ്രമിക്കൂ",
         "cal_show_hand": "തുടങ്ങാൻ കൈ കാണിക്കൂ",
-        "cal_recording": "റെക്കോർഡ് ചെയ്യുന്നു... ആംഗ്യം പിടിക്കൂ",
+        "cal_recording": "റെക്കോർഡ് ചെയ്യുന്നു — ബാർ നിറയുംവരെ ആംഗ്യം പിടിക്കൂ",
+        "cal_gesture_retry": "കിട്ടിയില്ല — ആംഗ്യം കാണിച്ച് വീണ്ടും സ്പെയ്സ്ബാർ അമർത്തൂ",
         "done_title": "എല്ലാം തയ്യാർ!",
         "done_subtitle": "AirPoint തയ്യാർ. ഒരു ചെറിയ ഓർമ്മപ്പെടുത്തൽ:",
         "done_gesture_open": "തുറന്ന കൈ",
@@ -594,13 +598,14 @@ STRINGS = {
         "cal_hint_dir": "கை வசதியாக எட்டும் {dir} எல்லைக்கு வந்ததும் ஸ்பேஸ்பாரை அழுத்தவும்",
         "cal_hint_steady": "காத்திருங்கள் — கேமரா உங்கள் கையைப் பார்க்கிறது",
         "cal_steady_inst": "கையை அசைக்காமல் வைத்து ஓய்வாக இருங்கள்",
-        "cal_pinch_inst": "கட்டைவிரலையும் அதன் அருகிலுள்ள விரலையும் இணைக்கவும்",
-        "cal_fist_inst": "முட்டி பிடிக்கவும் — அனைத்து விரல்களையும் மூடவும்",
-        "cal_hint_gesture": "பதிவுசெய்ய ஸ்பேஸ்பார்  அல்லது  தவிர்க்க N அழுத்தவும்",
+        "cal_pinch_inst": "கட்டைவிரலையும் அதன் அருகிலுள்ள விரலையும் இணைத்து அப்படியே வைத்திருங்கள்",
+        "cal_fist_inst": "முட்டி பிடிக்கவும் — அனைத்து விரல்களையும் மூடி அப்படியே வைத்திருங்கள்",
+        "cal_hint_gesture": "சைகையை வைத்தபடி பதிவுசெய்ய ஸ்பேஸ்பாரை அழுத்தவும்  (தவிர்க்க N)",
         "cal_hold_still": "அசைக்காமல் வைக்கவும்...",
         "cal_hand_lost": "கை தெரியவில்லை — மீண்டும் முயற்சிக்கவும்",
         "cal_show_hand": "தொடங்க உங்கள் கையைக் காட்டவும்",
-        "cal_recording": "பதிவாகிறது... சைகையை வைத்திருங்கள்",
+        "cal_recording": "பதிவாகிறது — பட்டை நிரம்பும் வரை சைகையை வைத்திருங்கள்",
+        "cal_gesture_retry": "பிடிபடவில்லை — சைகையைச் செய்து மீண்டும் ஸ்பேஸ்பாரை அழுத்தவும்",
         "done_title": "எல்லாம் தயார்!",
         "done_subtitle": "AirPoint தயார். ஒரு விரைவான நினைவூட்டல்:",
         "done_gesture_open": "திறந்த கை",
@@ -658,36 +663,213 @@ def set_language(lang):
 # PyQt5 Setup Wizard (used for profile selection & calibration)
 # ============================================================
 
-DARK_STYLE = """
-QWidget { background-color: #1e1e23; color: #e0e0e5; }
-QPushButton {
-    background-color: #00dcc8; color: #1a1a1f; border-radius: 8px;
-    padding: 10px 28px; font-weight: bold; font-size: 14px; border: none;
+# ---------------------------------------------------------------------------
+# Theme system
+#
+# AirPoint follows the OS appearance (light / dark) and uses an accent drawn
+# from the app logo (a vivid blue with a cyan glow). Styling is centralized:
+# `T` holds the resolved palette, `_font()` returns the platform's system UI
+# font, and BASE_QSS is the global stylesheet applied to the QApplication.
+# Onboarding is the only screen-heavy surface, so this is kept lightweight —
+# one palette object, one stylesheet, native window chrome.
+# ---------------------------------------------------------------------------
+from types import SimpleNamespace
+
+# Accent comes straight from the logo: azure #1C8CEE with a #2ADDFF cyan glow.
+_LIGHT = {
+    "bg": "#ECECEE", "card": "#FFFFFF", "surface": "#FFFFFF",
+    "surface_hover": "#EEEEF1", "border": "#D6D6DB", "border_strong": "#C2C2C9",
+    "text": "#1C1C1E", "text2": "#3A3A3E", "text_dim": "#6E6E76",
+    "on_accent": "#FFFFFF",
+    "accent": "#0A6FF0", "accent_hover": "#2A82F2", "accent_press": "#0858C8",
+    "accent_soft": "#E5F0FF", "accent_soft_hover": "#D6E8FF",
+    "danger": "#D9352B", "danger_text": "#C62B22",
+    "danger_soft": "#FCEAEA", "danger_soft_hover": "#F8DCDC", "danger_border": "#F0C0BE",
+    "warn": "#A4641A", "warn_soft": "#FBF1DE",
+    "drag": "#B23A86", "drag_soft": "#FAE5F2",
+    "scroll": "#2E5BD0", "scroll_soft": "#E4ECFF",
+    "slider_handle": "#FFFFFF", "camera_bg": "#0C0C0E", "focus": "#0A6FF0",
 }
-QPushButton:hover { background-color: #00f0d8; }
-QPushButton:pressed { background-color: #00b8a6; }
-QPushButton#secondary {
-    background-color: #35353d; color: #aaa; border: 1px solid #555;
+_DARK = {
+    "bg": "#1E1E22", "card": "#26262C", "surface": "#2A2A31",
+    "surface_hover": "#33333C", "border": "#3A3A43", "border_strong": "#4A4A55",
+    "text": "#F2F2F5", "text2": "#C9C9D0", "text_dim": "#8A8A93",
+    "on_accent": "#FFFFFF",
+    "accent": "#2A9AEE", "accent_hover": "#48A9F2", "accent_press": "#1E83D8",
+    "accent_soft": "#16344A", "accent_soft_hover": "#1B4060",
+    "danger": "#FF6B6B", "danger_text": "#FF8585",
+    "danger_soft": "#3A2122", "danger_soft_hover": "#4A2A2B", "danger_border": "#5A2E2E",
+    "warn": "#FFCC66", "warn_soft": "#3A3320",
+    "drag": "#FF88CC", "drag_soft": "#3A1A30",
+    "scroll": "#88AAFF", "scroll_soft": "#1A2A3D",
+    "slider_handle": "#F2F2F5", "camera_bg": "#0C0C0E", "focus": "#2ADDFF",
 }
-QPushButton#secondary:hover { background-color: #44444d; color: #ccc; }
-QLineEdit {
-    background-color: #2a2a30; border: 2px solid #00dcc8; border-radius: 8px;
-    padding: 10px; font-size: 16px; color: white;
-}
-QLineEdit:focus { border-color: #00f0d8; }
-QListWidget {
-    background-color: #2a2a30; border-radius: 8px; border: 1px solid #3a3a42;
-    font-size: 14px; outline: none;
-}
-QListWidget::item { padding: 12px 16px; border-radius: 6px; margin: 2px 4px; }
-QListWidget::item:selected { background-color: rgba(0,220,200,0.15); color: #00dcc8; }
-QListWidget::item:hover { background-color: #2e2e36; }
-QProgressBar {
-    border: none; border-radius: 9px; background-color: #2a2a30;
-    text-align: center; color: #888; font-size: 11px; max-height: 18px;
-}
-QProgressBar::chunk { background-color: #00dcc8; border-radius: 9px; }
+
+
+def _detect_dark():
+    """Best-effort OS dark-mode detection (no QApplication needed)."""
+    override = os.environ.get("AIRPOINT_THEME", "").strip().lower()
+    if override in ("dark", "light"):
+        return override == "dark"
+    try:
+        if sys.platform == "darwin":
+            import subprocess
+            r = subprocess.run(["defaults", "read", "-g", "AppleInterfaceStyle"],
+                               capture_output=True, text=True, timeout=1.5)
+            return r.returncode == 0 and "Dark" in r.stdout
+        if sys.platform == "win32":
+            import winreg
+            key = winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize")
+            val, _ = winreg.QueryValueEx(key, "AppsUseLightTheme")
+            return val == 0
+    except Exception:
+        pass
+    return True  # default to dark if the OS won't tell us
+
+
+IS_DARK = _detect_dark()
+T = SimpleNamespace(**(_DARK if IS_DARK else _LIGHT))
+
+# Platform system-UI font stacks — makes the app feel native on each OS while
+# letting Qt fall back automatically for Indic scripts (Hindi/Malayalam/Tamil).
+# On macOS, ".AppleSystemUIFont" resolves to San Francisco (the real system
+# font); Helvetica Neue is the always-present native fallback. The family is
+# carried by the application font (set in apply_app_theme) rather than the
+# global stylesheet, so the genuine system font isn't overridden by QSS.
+if sys.platform == "darwin":
+    _UI_FAMILIES = [".AppleSystemUIFont", "SF Pro Text", "Helvetica Neue", "Lucida Grande"]
+elif sys.platform == "win32":
+    _UI_FAMILIES = ["Segoe UI Variable Text", "Segoe UI", "Tahoma"]
+else:
+    _UI_FAMILIES = ["Inter", "Noto Sans", "Ubuntu", "DejaVu Sans"]
+
+
+def _font(size, weight=QFont.Normal):
+    """A QFont in the platform system-UI family at the given point size."""
+    f = QFont()
+    f.setFamilies(_UI_FAMILIES)
+    f.setPointSize(size)
+    f.setWeight(weight)
+    return f
+
+
+def _theme_html(s):
+    """Recolor the inline-HTML helper colors used in translated rich-text strings
+    (#ccc = emphasized term, #888 = description) to the active theme so they stay
+    legible in both light and dark mode."""
+    return s.replace("#ccc", T.text2).replace("#888", T.text_dim)
+
+
+def _build_base_qss(t):
+    return f"""
+QWidget {{ background-color: {t.bg}; color: {t.text}; }}
+QLabel {{ background: transparent; }}
+QPushButton {{
+    background-color: {t.accent}; color: {t.on_accent}; border: none;
+    border-radius: 8px; padding: 10px 22px; font-size: 14px; font-weight: 600;
+}}
+QPushButton:hover {{ background-color: {t.accent_hover}; }}
+QPushButton:pressed {{ background-color: {t.accent_press}; }}
+QPushButton:disabled {{ background-color: {t.surface}; color: {t.text_dim}; }}
+QPushButton#secondary {{
+    background-color: {t.surface}; color: {t.text};
+    border: 1px solid {t.border}; font-weight: 500;
+}}
+QPushButton#secondary:hover {{ background-color: {t.surface_hover}; border-color: {t.border_strong}; }}
+QPushButton#danger {{
+    background-color: {t.danger_soft}; color: {t.danger};
+    border: 1px solid {t.danger_border}; font-weight: 600;
+}}
+QPushButton#danger:hover {{ background-color: {t.danger_soft_hover}; }}
+QLineEdit {{
+    background-color: {t.surface}; border: 1px solid {t.border}; border-radius: 8px;
+    padding: 10px; font-size: 15px; color: {t.text};
+    selection-background-color: {t.accent}; selection-color: {t.on_accent};
+}}
+QLineEdit:focus {{ border: 2px solid {t.accent}; }}
+QListWidget {{
+    background-color: {t.surface}; border: 1px solid {t.border}; border-radius: 8px;
+    outline: none; font-size: 14px; padding: 4px;
+}}
+QListWidget::item {{ padding: 10px 12px; border-radius: 6px; margin: 2px 2px; color: {t.text}; }}
+QListWidget::item:selected {{ background-color: {t.accent_soft}; color: {t.accent}; }}
+QListWidget::item:hover {{ background-color: {t.surface_hover}; }}
+QProgressBar {{
+    border: none; border-radius: 7px; background-color: {t.surface_hover};
+    text-align: center; color: {t.text_dim}; font-size: 11px; max-height: 14px;
+}}
+QProgressBar::chunk {{ background-color: {t.accent}; border-radius: 7px; }}
+QCheckBox {{ color: {t.text2}; spacing: 8px; background: transparent; }}
+QCheckBox::indicator {{
+    width: 18px; height: 18px; border-radius: 5px;
+    border: 1px solid {t.border_strong}; background: {t.surface};
+}}
+QCheckBox::indicator:hover {{ border-color: {t.accent}; }}
+QCheckBox::indicator:checked {{ background: {t.accent}; border-color: {t.accent}; }}
+QComboBox {{
+    background-color: {t.surface}; color: {t.text}; border: 1px solid {t.border};
+    border-radius: 8px; padding: 7px 12px; font-size: 13px;
+}}
+QComboBox:hover {{ border-color: {t.accent}; }}
+QComboBox::drop-down {{ border: none; width: 22px; }}
+QComboBox QAbstractItemView {{
+    background-color: {t.card}; color: {t.text}; border: 1px solid {t.border};
+    outline: none; selection-background-color: {t.accent_soft}; selection-color: {t.accent};
+}}
+QSlider::groove:horizontal {{ height: 5px; background: {t.surface_hover}; border-radius: 3px; }}
+QSlider::sub-page:horizontal {{ background: {t.accent}; border-radius: 3px; }}
+QSlider::add-page:horizontal {{ background: {t.surface_hover}; border-radius: 3px; }}
+QSlider::handle:horizontal {{
+    background: {t.slider_handle}; border: 1px solid {t.accent};
+    width: 16px; height: 16px; margin: -7px 0; border-radius: 9px;
+}}
+QSlider::handle:horizontal:hover {{ background: {t.accent}; }}
+QToolTip {{ background-color: {t.card}; color: {t.text}; border: 1px solid {t.border}; padding: 4px 8px; }}
+QScrollBar:vertical {{ background: transparent; width: 10px; margin: 2px; }}
+QScrollBar::handle:vertical {{ background: {t.border_strong}; border-radius: 5px; min-height: 24px; }}
+QScrollBar::handle:vertical:hover {{ background: {t.text_dim}; }}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: transparent; }}
 """
+
+
+BASE_QSS = _build_base_qss(T)
+
+
+def apply_app_theme(app):
+    """Apply the resolved theme to a QApplication: Fusion base (so Windows and
+    macOS render the same clean, Mac-like styling), matching palette for native
+    dialogs, system font, and the global stylesheet."""
+    try:
+        app.setStyle("Fusion")
+    except Exception:
+        pass
+    from PyQt5.QtGui import QPalette, QColor
+    t = T
+    pal = QPalette()
+    pal.setColor(QPalette.Window, QColor(t.bg))
+    pal.setColor(QPalette.WindowText, QColor(t.text))
+    pal.setColor(QPalette.Base, QColor(t.surface))
+    pal.setColor(QPalette.AlternateBase, QColor(t.card))
+    pal.setColor(QPalette.Text, QColor(t.text))
+    pal.setColor(QPalette.Button, QColor(t.surface))
+    pal.setColor(QPalette.ButtonText, QColor(t.text))
+    pal.setColor(QPalette.BrightText, QColor(t.danger))
+    pal.setColor(QPalette.Highlight, QColor(t.accent))
+    pal.setColor(QPalette.HighlightedText, QColor(t.on_accent))
+    pal.setColor(QPalette.ToolTipBase, QColor(t.card))
+    pal.setColor(QPalette.ToolTipText, QColor(t.text))
+    try:
+        pal.setColor(QPalette.PlaceholderText, QColor(t.text_dim))
+    except Exception:
+        pass
+    pal.setColor(QPalette.Disabled, QPalette.Text, QColor(t.text_dim))
+    pal.setColor(QPalette.Disabled, QPalette.ButtonText, QColor(t.text_dim))
+    app.setPalette(pal)
+    app.setFont(_font(10))
+    app.setStyleSheet(BASE_QSS)
 
 
 class CameraWidget(QLabel):
@@ -697,7 +879,7 @@ class CameraWidget(QLabel):
         super().__init__(parent)
         self.setFixedSize(width, height)
         self.setAlignment(Qt.AlignCenter)
-        self.setStyleSheet("background-color: #111; border-radius: 10px;")
+        self.setStyleSheet(f"background-color: {T.camera_bg}; border-radius: 10px;")
 
     def update_frame(self, cv_frame):
         rgb = cv2.cvtColor(cv_frame, cv2.COLOR_BGR2RGB)
@@ -741,7 +923,7 @@ class SetupWizard(QWidget):
         # Window setup
         self.setWindowTitle("AirPoint Setup")
         self.setFixedSize(720, 540)
-        self.setStyleSheet(DARK_STYLE)
+        self.setStyleSheet(BASE_QSS)
 
         # Stacked widget for pages
         self.stacked = QStackedWidget()
@@ -789,15 +971,15 @@ class SetupWizard(QWidget):
         vbox.addStretch(1)
 
         title = QLabel("Choose your language")
-        title.setFont(QFont("Segoe UI", 24, QFont.Bold))
+        title.setFont(_font(24, QFont.Bold))
         title.setAlignment(Qt.AlignCenter)
         title.setStyleSheet("color: white;")
         vbox.addWidget(title)
 
         sub = QLabel("अपनी भाषा चुनें")
-        sub.setFont(QFont("Segoe UI", 16))
+        sub.setFont(_font(16))
         sub.setAlignment(Qt.AlignCenter)
-        sub.setStyleSheet("color: #aaa;")
+        sub.setStyleSheet(f"color: {T.text_dim};")
         vbox.addWidget(sub)
 
         vbox.addSpacing(30)
@@ -891,7 +1073,7 @@ class SetupWizard(QWidget):
             g_label.setText(S(g_key))
             a_label.setText(S(a_key))
         self._extras_title.setText(S("done_extras_title"))
-        self._extras_desc.setText(S("done_extras_gaze") + "<br>" + S("done_extras_dwell"))
+        self._extras_desc.setText(_theme_html(S("done_extras_gaze") + "<br>" + S("done_extras_dwell")))
         self.autostart_cb.setText(S("autostart_label"))
         self._start_btn.setText(S("start_airpoint"))
 
@@ -902,15 +1084,15 @@ class SetupWizard(QWidget):
         vbox.setSpacing(12)
 
         self._prof_title = QLabel(S("profile_title"))
-        self._prof_title.setFont(QFont("Segoe UI", 24, QFont.Bold))
+        self._prof_title.setFont(_font(24, QFont.Bold))
         self._prof_title.setAlignment(Qt.AlignCenter)
         self._prof_title.setStyleSheet("color: white;")
         vbox.addWidget(self._prof_title)
 
         self._prof_sub = QLabel(S("profile_subtitle"))
-        self._prof_sub.setFont(QFont("Segoe UI", 12))
+        self._prof_sub.setFont(_font(12))
         self._prof_sub.setAlignment(Qt.AlignCenter)
-        self._prof_sub.setStyleSheet("color: #999;")
+        self._prof_sub.setStyleSheet(f"color: {T.text_dim};")
         vbox.addWidget(self._prof_sub)
 
         vbox.addSpacing(10)
@@ -946,15 +1128,15 @@ class SetupWizard(QWidget):
         vbox.addStretch(1)
 
         self._name_title = QLabel(S("name_title"))
-        self._name_title.setFont(QFont("Segoe UI", 22, QFont.Bold))
+        self._name_title.setFont(_font(22, QFont.Bold))
         self._name_title.setAlignment(Qt.AlignCenter)
         self._name_title.setStyleSheet("color: white;")
         vbox.addWidget(self._name_title)
 
         self._name_sub = QLabel(S("name_subtitle"))
-        self._name_sub.setFont(QFont("Segoe UI", 11))
+        self._name_sub.setFont(_font(11))
         self._name_sub.setAlignment(Qt.AlignCenter)
-        self._name_sub.setStyleSheet("color: #888;")
+        self._name_sub.setStyleSheet(f"color: {T.text_dim};")
         vbox.addWidget(self._name_sub)
 
         vbox.addSpacing(10)
@@ -988,23 +1170,23 @@ class SetupWizard(QWidget):
         vbox.setSpacing(6)
 
         self.welcome_title = QLabel(S("welcome_default"))
-        self.welcome_title.setFont(QFont("Segoe UI", 24, QFont.Bold))
+        self.welcome_title.setFont(_font(24, QFont.Bold))
         self.welcome_title.setAlignment(Qt.AlignCenter)
         self.welcome_title.setStyleSheet("color: white;")
         vbox.addWidget(self.welcome_title)
 
         self._welcome_sub = QLabel(S("welcome_sub"))
-        self._welcome_sub.setFont(QFont("Segoe UI", 12))
+        self._welcome_sub.setFont(_font(12))
         self._welcome_sub.setAlignment(Qt.AlignCenter)
-        self._welcome_sub.setStyleSheet("color: #aaa;")
+        self._welcome_sub.setStyleSheet(f"color: {T.text_dim};")
         self._welcome_sub.setWordWrap(True)
         vbox.addWidget(self._welcome_sub)
 
         vbox.addSpacing(10)
 
         self._how_title = QLabel(S("how_title"))
-        self._how_title.setFont(QFont("Segoe UI", 14, QFont.Bold))
-        self._how_title.setStyleSheet("color: #00dcc8;")
+        self._how_title.setFont(_font(14, QFont.Bold))
+        self._how_title.setStyleSheet(f"color: {T.accent};")
         vbox.addWidget(self._how_title)
 
         vbox.addSpacing(4)
@@ -1022,14 +1204,14 @@ class SetupWizard(QWidget):
             row.setSpacing(10)
             row.setContentsMargins(0, 0, 0, 0)
             t = QLabel(f"<b>{S(title_key)}</b>")
-            t.setFont(QFont("Segoe UI", 11))
-            t.setStyleSheet("color: #ddd;")
+            t.setFont(_font(11))
+            t.setStyleSheet(f"color: {T.text2};")
             t.setFixedWidth(120)
             t.setAlignment(Qt.AlignTop | Qt.AlignLeft)
             row.addWidget(t)
             d = QLabel(S(desc_key))
-            d.setFont(QFont("Segoe UI", 10))
-            d.setStyleSheet("color: #999;")
+            d.setFont(_font(10))
+            d.setStyleSheet(f"color: {T.text_dim};")
             d.setWordWrap(True)
             row.addWidget(d, 1)
             self._feat_labels.append((title_key, t, desc_key, d))
@@ -1039,9 +1221,9 @@ class SetupWizard(QWidget):
         vbox.addSpacing(6)
 
         self._setup_note = QLabel(S("setup_note"))
-        self._setup_note.setFont(QFont("Segoe UI", 11))
+        self._setup_note.setFont(_font(11))
         self._setup_note.setAlignment(Qt.AlignCenter)
-        self._setup_note.setStyleSheet("color: #aaa;")
+        self._setup_note.setStyleSheet(f"color: {T.text_dim};")
         self._setup_note.setWordWrap(True)
         vbox.addWidget(self._setup_note)
 
@@ -1077,7 +1259,7 @@ class SetupWizard(QWidget):
         for i in range(4):
             dot = QLabel()
             dot.setFixedSize(14, 14)
-            dot.setStyleSheet("background-color: #3a3a42; border-radius: 7px;")
+            dot.setStyleSheet(f"background-color: {T.border}; border-radius: 7px;")
             self.step_dots.append(dot)
             dots_row.addWidget(dot)
         dots_row.addStretch()
@@ -1085,16 +1267,16 @@ class SetupWizard(QWidget):
 
         # Title and instruction
         self.cal_title = QLabel(S("cal_step1_title"))
-        self.cal_title.setFont(QFont("Segoe UI", 11))
+        self.cal_title.setFont(_font(11))
         self.cal_title.setAlignment(Qt.AlignCenter)
-        self.cal_title.setStyleSheet("color: #999;")
+        self.cal_title.setStyleSheet(f"color: {T.text_dim};")
         self.cal_title.setWordWrap(True)
         vbox.addWidget(self.cal_title)
 
         self.cal_instruction = QLabel(S("cal_move_left"))
-        self.cal_instruction.setFont(QFont("Segoe UI", 20, QFont.Bold))
+        self.cal_instruction.setFont(_font(20, QFont.Bold))
         self.cal_instruction.setAlignment(Qt.AlignCenter)
-        self.cal_instruction.setStyleSheet("color: #00dcc8;")
+        self.cal_instruction.setStyleSheet(f"color: {T.accent};")
         self.cal_instruction.setWordWrap(True)
         vbox.addWidget(self.cal_instruction)
 
@@ -1107,9 +1289,9 @@ class SetupWizard(QWidget):
 
         # Hint
         self.cal_hint = QLabel(S("cal_hint_dir", dir="LEFT"))
-        self.cal_hint.setFont(QFont("Segoe UI", 16, QFont.Bold))
+        self.cal_hint.setFont(_font(16, QFont.Bold))
         self.cal_hint.setAlignment(Qt.AlignCenter)
-        self.cal_hint.setStyleSheet("color: #00dcc8;")
+        self.cal_hint.setStyleSheet(f"color: {T.accent};")
         vbox.addWidget(self.cal_hint)
 
         # Progress bar (hidden by default)
@@ -1135,7 +1317,7 @@ class SetupWizard(QWidget):
         for _ in range(4):
             dot = QLabel()
             dot.setFixedSize(14, 14)
-            dot.setStyleSheet("background-color: #00dcc8; border-radius: 7px;")
+            dot.setStyleSheet(f"background-color: {T.accent}; border-radius: 7px;")
             dots_row.addWidget(dot)
         dots_row.addStretch()
         vbox.addLayout(dots_row)
@@ -1143,22 +1325,22 @@ class SetupWizard(QWidget):
         vbox.addSpacing(6)
 
         self._done_title = QLabel(S("done_title"))
-        self._done_title.setFont(QFont("Segoe UI", 24, QFont.Bold))
+        self._done_title.setFont(_font(24, QFont.Bold))
         self._done_title.setAlignment(Qt.AlignCenter)
-        self._done_title.setStyleSheet("color: #00e8a0;")
+        self._done_title.setStyleSheet(f"color: {T.accent};")
         vbox.addWidget(self._done_title)
 
         self.done_subtitle = QLabel(S("done_subtitle"))
-        self.done_subtitle.setFont(QFont("Segoe UI", 11))
+        self.done_subtitle.setFont(_font(11))
         self.done_subtitle.setAlignment(Qt.AlignCenter)
-        self.done_subtitle.setStyleSheet("color: #999;")
+        self.done_subtitle.setStyleSheet(f"color: {T.text_dim};")
         vbox.addWidget(self.done_subtitle)
 
         vbox.addSpacing(8)
 
         # Quick reference card
         card = QWidget()
-        card.setStyleSheet("background-color: #252530; border-radius: 10px; padding: 12px;")
+        card.setStyleSheet(f"background-color: {T.card}; border: 1px solid {T.border}; border-radius: 10px; padding: 12px;")
         card_vbox = QVBoxLayout(card)
         card_vbox.setContentsMargins(14, 10, 14, 10)
         card_vbox.setSpacing(6)
@@ -1173,13 +1355,13 @@ class SetupWizard(QWidget):
         for g_key, a_key in gesture_keys:
             row = QHBoxLayout()
             g = QLabel(S(g_key))
-            g.setFont(QFont("Segoe UI", 11))
-            g.setStyleSheet("color: #bbb;")
+            g.setFont(_font(11))
+            g.setStyleSheet(f"color: {T.text2};")
             row.addWidget(g)
             row.addStretch()
             a = QLabel(S(a_key))
-            a.setFont(QFont("Segoe UI", 11, QFont.Bold))
-            a.setStyleSheet("color: #00dcc8;")
+            a.setFont(_font(11, QFont.Bold))
+            a.setStyleSheet(f"color: {T.accent};")
             a.setAlignment(Qt.AlignRight)
             row.addWidget(a)
             self._done_gesture_labels.append((g_key, g, a_key, a))
@@ -1190,26 +1372,20 @@ class SetupWizard(QWidget):
         vbox.addSpacing(6)
 
         self._extras_title = QLabel(S("done_extras_title"))
-        self._extras_title.setFont(QFont("Segoe UI", 11))
-        self._extras_title.setStyleSheet("color: #999;")
+        self._extras_title.setFont(_font(11))
+        self._extras_title.setStyleSheet(f"color: {T.text_dim};")
         vbox.addWidget(self._extras_title)
 
-        self._extras_desc = QLabel(S("done_extras_gaze") + "<br>" + S("done_extras_dwell"))
-        self._extras_desc.setFont(QFont("Segoe UI", 10))
+        self._extras_desc = QLabel(_theme_html(S("done_extras_gaze") + "<br>" + S("done_extras_dwell")))
+        self._extras_desc.setFont(_font(10))
         self._extras_desc.setWordWrap(True)
-        self._extras_desc.setStyleSheet("color: #888;")
+        self._extras_desc.setStyleSheet(f"color: {T.text_dim};")
         vbox.addWidget(self._extras_desc)
 
         vbox.addSpacing(8)
 
         self.autostart_cb = QCheckBox(S("autostart_label"))
-        self.autostart_cb.setFont(QFont("Segoe UI", 11))
-        self.autostart_cb.setStyleSheet("""
-            QCheckBox { color: #bbb; spacing: 8px; }
-            QCheckBox::indicator { width: 18px; height: 18px; border-radius: 4px;
-                                   border: 2px solid #555; background: #2a2a32; }
-            QCheckBox::indicator:checked { background: #00dcc8; border-color: #00dcc8; }
-        """)
+        self.autostart_cb.setFont(_font(11))
         self.autostart_cb.setChecked(get_autostart_enabled())
         cb_row = QHBoxLayout()
         cb_row.addStretch()
@@ -1274,11 +1450,11 @@ class SetupWizard(QWidget):
         current = step_map.get(self.cal_step, 0)
         for i, dot in enumerate(self.step_dots):
             if i < current:
-                dot.setStyleSheet("background-color: #00dcc8; border-radius: 7px;")
+                dot.setStyleSheet(f"background-color: {T.accent}; border-radius: 7px;")
             elif i == current:
-                dot.setStyleSheet("background-color: #00dcc8; border-radius: 7px; border: 2px solid white;")
+                dot.setStyleSheet(f"background-color: {T.accent}; border-radius: 7px; border: 2px solid {T.text};")
             else:
-                dot.setStyleSheet("background-color: #3a3a42; border-radius: 7px;")
+                dot.setStyleSheet(f"background-color: {T.border}; border-radius: 7px;")
 
         if self.cal_step == 0:
             d = DIRECTIONS[self.dir_index] if self.dir_index < 4 else "DOWN"
@@ -1402,7 +1578,7 @@ class SetupWizard(QWidget):
         if self._space and self.capture_countdown is None and hand_center is not None:
             self.capture_countdown = time.time()
             self.cal_hint.setText(S("cal_hold_still"))
-            self.cal_hint.setStyleSheet("color: #00dcc8; font-weight: bold;")
+            self.cal_hint.setStyleSheet(f"color: {T.accent}; font-weight: bold;")
 
         if self.capture_countdown is not None:
             elapsed = time.time() - self.capture_countdown
@@ -1413,12 +1589,12 @@ class SetupWizard(QWidget):
                     print(f"  Captured {label}: ({hand_center[0]:.4f}, {hand_center[1]:.4f})")
                     self.dir_index += 1
                     self.capture_countdown = None
-                    self.cal_hint.setStyleSheet("color: #00dcc8; font-weight: bold;")
+                    self.cal_hint.setStyleSheet(f"color: {T.accent}; font-weight: bold;")
                     self._update_cal_display()
                 else:
                     self.capture_countdown = None
                     self.cal_hint.setText(S("cal_hand_lost"))
-                    self.cal_hint.setStyleSheet("color: #ff6666; font-weight: bold;")
+                    self.cal_hint.setStyleSheet(f"color: {T.danger}; font-weight: bold;")
 
     def _tick_steadiness(self, hand_center):
         TREMOR_DURATION = 5.0
@@ -1441,7 +1617,7 @@ class SetupWizard(QWidget):
                 self.tremor_samples.clear()
                 self.cal_progress.setValue(0)
             self.cal_hint.setText(S("cal_show_hand"))
-            self.cal_hint.setStyleSheet("color: #ff6666; font-weight: bold;")
+            self.cal_hint.setStyleSheet(f"color: {T.danger}; font-weight: bold;")
 
     def _finish_steadiness(self):
         if len(self.tremor_samples) >= 10:
@@ -1494,7 +1670,7 @@ class SetupWizard(QWidget):
             self.cal_progress.setVisible(True)
             self.cal_progress.setValue(0)
             self.cal_hint.setText(S("cal_recording"))
-            self.cal_hint.setStyleSheet("color: #00dcc8; font-weight: bold;")
+            self.cal_hint.setStyleSheet(f"color: {T.accent}; font-weight: bold;")
 
         if self.gesture_sampling and self.gesture_sample_start is not None:
             elapsed = time.time() - self.gesture_sample_start
@@ -1509,14 +1685,21 @@ class SetupWizard(QWidget):
                     avg = float(np.mean(self.gesture_samples))
                     self.gesture_results[gesture_name] = avg
                     print(f"  {gesture_name}: measured={avg:.4f} ({len(self.gesture_samples)} samples)")
+                    self._advance_from_gesture(gesture_name)
                 else:
-                    self.gesture_results[gesture_name] = None
-                    print(f"  {gesture_name}: too few samples, gesture disabled")
-                self._advance_from_gesture(gesture_name)
+                    # Hand wasn't visible during recording. Don't silently disable
+                    # the gesture — reset and let the user try again (or press N to skip).
+                    print(f"  {gesture_name}: too few samples, retrying")
+                    self.gesture_sampling = False
+                    self.gesture_sample_start = None
+                    self.gesture_samples = []
+                    self.cal_progress.setVisible(False)
+                    self.cal_hint.setText(S("cal_gesture_retry"))
+                    self.cal_hint.setStyleSheet(f"color: {T.danger}; font-weight: bold;")
 
     def _advance_from_gesture(self, gesture_name):
         self.cal_progress.setVisible(False)
-        self.cal_hint.setStyleSheet("color: #00dcc8; font-weight: bold;")
+        self.cal_hint.setStyleSheet(f"color: {T.accent}; font-weight: bold;")
         if gesture_name == "PINCH":
             self.cal_step = 3
             self._update_cal_display()
@@ -1598,15 +1781,15 @@ class SetupWizard(QWidget):
 class StatusPanel(QWidget):
     """User-friendly control panel shown during tracking."""
 
-    TOGGLE_ON = """
-        QPushButton { background-color: #1a3d38; color: #00e8a0; border: 2px solid #00dcc8;
-                      border-radius: 12px; padding: 12px; text-align: left; font-size: 14px; }
-        QPushButton:hover { background-color: #1f4a43; }
+    TOGGLE_ON = f"""
+        QPushButton {{ background-color: {T.accent_soft}; color: {T.accent}; border: 1px solid {T.accent};
+                      border-radius: 12px; padding: 12px; text-align: left; font-size: 14px; font-weight: 600; }}
+        QPushButton:hover {{ background-color: {T.accent_soft_hover}; }}
     """
-    TOGGLE_OFF = """
-        QPushButton { background-color: #2a2a32; color: #888; border: 2px solid #3a3a44;
-                      border-radius: 12px; padding: 12px; text-align: left; font-size: 14px; }
-        QPushButton:hover { background-color: #333340; }
+    TOGGLE_OFF = f"""
+        QPushButton {{ background-color: {T.surface}; color: {T.text_dim}; border: 1px solid {T.border};
+                      border-radius: 12px; padding: 12px; text-align: left; font-size: 14px; font-weight: 500; }}
+        QPushButton:hover {{ background-color: {T.surface_hover}; }}
     """
 
     def __init__(self, controller):
@@ -1614,7 +1797,7 @@ class StatusPanel(QWidget):
         self.controller = controller
         self.setWindowTitle("AirPoint")
         self.setFixedSize(360, 660)
-        self.setStyleSheet(DARK_STYLE + " StatusPanel { background-color: #1e1e23; }")
+        self.setStyleSheet(BASE_QSS + f" StatusPanel {{ background-color: {T.bg}; }}")
         self.setWindowFlags(Qt.WindowStaysOnTopHint | Qt.Tool)
 
         vbox = QVBoxLayout(self)
@@ -1623,27 +1806,27 @@ class StatusPanel(QWidget):
 
         # ---- Header + status badge ----
         header = QLabel("AirPoint")
-        header.setFont(QFont("Segoe UI", 20, QFont.Bold))
+        header.setFont(_font(20, QFont.Bold))
         header.setAlignment(Qt.AlignCenter)
-        header.setStyleSheet("color: #00dcc8;")
+        header.setStyleSheet(f"color: {T.accent};")
         vbox.addWidget(header)
 
         self.profile_label = QLabel()
-        self.profile_label.setFont(QFont("Segoe UI", 11))
+        self.profile_label.setFont(_font(11))
         self.profile_label.setAlignment(Qt.AlignCenter)
-        self.profile_label.setStyleSheet("color: #888;")
+        self.profile_label.setStyleSheet(f"color: {T.text_dim};")
         vbox.addWidget(self.profile_label)
 
         vbox.addSpacing(10)
 
         # Big status indicator
         self.status_badge = QLabel(S("panel_looking"))
-        self.status_badge.setFont(QFont("Segoe UI", 15, QFont.Bold))
+        self.status_badge.setFont(_font(15, QFont.Bold))
         self.status_badge.setAlignment(Qt.AlignCenter)
         self.status_badge.setFixedHeight(50)
-        self.status_badge.setStyleSheet("""
-            background-color: #2a2a32; color: #888; border-radius: 12px; padding: 8px;
-        """)
+        self.status_badge.setStyleSheet(
+            f"background-color: {T.surface}; color: {T.text_dim};"
+            f" border: 1px solid {T.border}; border-radius: 12px; padding: 8px;")
         vbox.addWidget(self.status_badge)
 
         vbox.addSpacing(12)
@@ -1675,18 +1858,16 @@ class StatusPanel(QWidget):
         vbox.addStretch(1)
 
         # ---- Settings / Profiles row ----
-        _SECONDARY = ("QPushButton { background-color: #2a2a32; color: #ccc; border: 2px solid #3a3a44;"
-                      " border-radius: 12px; font-size: 14px; } QPushButton:hover { background-color: #333340; }")
         tools_row = QHBoxLayout()
-        self.settings_btn = QPushButton("⚙  Settings")
+        self.settings_btn = QPushButton("Settings")
+        self.settings_btn.setObjectName("secondary")
         self.settings_btn.setCursor(Qt.PointingHandCursor)
         self.settings_btn.setFixedHeight(44)
-        self.settings_btn.setStyleSheet(_SECONDARY)
         self.settings_btn.clicked.connect(self._open_settings)
-        self.profiles_btn = QPushButton("👤  Profiles")
+        self.profiles_btn = QPushButton("Profiles")
+        self.profiles_btn.setObjectName("secondary")
         self.profiles_btn.setCursor(Qt.PointingHandCursor)
         self.profiles_btn.setFixedHeight(44)
-        self.profiles_btn.setStyleSheet(_SECONDARY)
         self.profiles_btn.clicked.connect(self._open_profiles)
         tools_row.addWidget(self.settings_btn)
         tools_row.addWidget(self.profiles_btn)
@@ -1696,25 +1877,17 @@ class StatusPanel(QWidget):
 
         # ---- Bottom actions ----
         self.recal_btn = QPushButton(S("panel_redo"))
+        self.recal_btn.setObjectName("secondary")
         self.recal_btn.setCursor(Qt.PointingHandCursor)
         self.recal_btn.setFixedHeight(44)
-        self.recal_btn.setStyleSheet("""
-            QPushButton { background-color: #2a2a32; color: #ccc; border: 2px solid #3a3a44;
-                          border-radius: 12px; font-size: 15px; }
-            QPushButton:hover { background-color: #333340; }
-        """)
         vbox.addWidget(self.recal_btn)
 
         vbox.addSpacing(8)
 
         self.quit_btn = QPushButton(S("panel_stop"))
+        self.quit_btn.setObjectName("danger")
         self.quit_btn.setCursor(Qt.PointingHandCursor)
         self.quit_btn.setFixedHeight(44)
-        self.quit_btn.setStyleSheet("""
-            QPushButton { background-color: #3a2020; color: #ff7777; border: 2px solid #552a2a;
-                          border-radius: 12px; font-size: 15px; }
-            QPushButton:hover { background-color: #4a2a2a; }
-        """)
         vbox.addWidget(self.quit_btn)
 
         # Timer for updating status
@@ -1756,28 +1929,31 @@ class StatusPanel(QWidget):
         self._update_status()
         self.timer.start()
 
+    def _set_badge(self, bg, fg, border=None):
+        self.status_badge.setStyleSheet(
+            f"background-color: {bg}; color: {fg};"
+            f" border: 1px solid {border or bg}; border-radius: 12px; padding: 8px;")
+
     def _update_status(self):
         c = self.controller
         self.profile_label.setText(S("panel_hi", name=c.profile_name or "User"))
 
         # -- Pause button --
         if getattr(c, 'paused', False):
-            self.pause_btn.setText("▶  Resume tracking")
+            self.pause_btn.setText("Resume tracking")
             self.pause_btn.setStyleSheet(self.TOGGLE_ON)
         else:
-            self.pause_btn.setText("⏸  Pause tracking")
+            self.pause_btn.setText("Pause tracking")
             self.pause_btn.setStyleSheet(self.TOGGLE_OFF)
 
         # -- Status badge --
         gesture = getattr(c, '_last_gesture', 'no_hand')
         if getattr(c, 'paused', False):
-            self.status_badge.setText("⏸  Paused")
-            self.status_badge.setStyleSheet(
-                "background-color: #3a3320; color: #ffcc66; border-radius: 12px; padding: 8px;")
+            self.status_badge.setText("Paused")
+            self._set_badge(T.warn_soft, T.warn)
         elif gesture == 'no_hand':
             self.status_badge.setText(S("panel_looking"))
-            self.status_badge.setStyleSheet(
-                "background-color: #2a2a32; color: #888; border-radius: 12px; padding: 8px;")
+            self._set_badge(T.surface, T.text_dim, border=T.border)
         else:
             friendly = {
                 "cursor_control": S("panel_moving"),
@@ -1794,18 +1970,14 @@ class StatusPanel(QWidget):
                 "idle": S("panel_ready"),
             }.get(gesture, S("panel_ready"))
             self.status_badge.setText(friendly)
-            bg = "#1a3d38"
-            fg = "#00e8a0"
-            if "click" in gesture.lower():
-                bg, fg = "#1a3d2a", "#00e8a0"
-            elif "drag" in gesture.lower():
-                bg, fg = "#3a1a30", "#ff88cc"
+            bg, fg = T.accent_soft, T.accent
+            if "drag" in gesture.lower():
+                bg, fg = T.drag_soft, T.drag
             elif "scroll" in gesture.lower():
-                bg, fg = "#1a2a3d", "#88aaff"
+                bg, fg = T.scroll_soft, T.scroll
             elif "safety" in gesture.lower():
-                bg, fg = "#3d2a1a", "#ffaa44"
-            self.status_badge.setStyleSheet(
-                f"background-color: {bg}; color: {fg}; border-radius: 12px; padding: 8px;")
+                bg, fg = T.warn_soft, T.warn
+            self._set_badge(bg, fg)
 
         # -- Gaze toggle --
         if c.gaze_detection_enabled:
@@ -1854,16 +2026,10 @@ class SettingsPanel(QWidget):
     instantly to the running controller (the tracking loop reads these attrs
     each frame); Save persists them to the active profile."""
 
-    SLIDER_QSS = """
-        QSlider::groove:horizontal { height: 6px; background: #2a2a30; border-radius: 3px; }
-        QSlider::sub-page:horizontal { background: #00dcc8; border-radius: 3px; }
-        QSlider::handle:horizontal { background: #00dcc8; width: 16px; margin: -6px 0; border-radius: 8px; }
-        QSlider::handle:horizontal:hover { background: #00f0d8; }
-    """
-    PRESET_ON = ("QPushButton { background:#1a3d38; color:#00e8a0; border:2px solid #00dcc8;"
-                 " border-radius:10px; font-size:12px; }")
-    PRESET_OFF = ("QPushButton { background:#2a2a32; color:#aaa; border:2px solid #3a3a44;"
-                  " border-radius:10px; font-size:12px; } QPushButton:hover { background:#333340; }")
+    PRESET_ON = (f"QPushButton {{ background:{T.accent_soft}; color:{T.accent}; border:1px solid {T.accent};"
+                 f" border-radius:9px; font-size:12px; font-weight:600; }}")
+    PRESET_OFF = (f"QPushButton {{ background:{T.surface}; color:{T.text_dim}; border:1px solid {T.border};"
+                  f" border-radius:9px; font-size:12px; }} QPushButton:hover {{ background:{T.surface_hover}; }}")
 
     # caption, controller attr, lo, hi, step, scale, is_int, value formatter
     SLIDERS = [
@@ -1885,7 +2051,7 @@ class SettingsPanel(QWidget):
         # off the bottom under HiDPI / large-font scaling.
         self.setFixedWidth(400)
         self.setMinimumHeight(560)
-        self.setStyleSheet(DARK_STYLE + " SettingsPanel { background-color: #1e1e23; } " + self.SLIDER_QSS)
+        self.setStyleSheet(BASE_QSS + f" SettingsPanel {{ background-color: {T.bg}; }}")
         self.setWindowFlags(Qt.WindowStaysOnTopHint | Qt.Tool)
 
         v = QVBoxLayout(self)
@@ -1893,8 +2059,8 @@ class SettingsPanel(QWidget):
         v.setSpacing(7)
 
         header = QLabel("Settings")
-        header.setFont(QFont("Segoe UI", 18, QFont.Bold))
-        header.setStyleSheet("color: #00dcc8;")
+        header.setFont(_font(18, QFont.Bold))
+        header.setStyleSheet(f"color: {T.accent};")
         v.addWidget(header)
 
         # ---- Pointer-feel presets ----
@@ -1912,7 +2078,7 @@ class SettingsPanel(QWidget):
         v.addLayout(preset_row)
         self.custom_lbl = QLabel("")
         self.custom_lbl.setAlignment(Qt.AlignCenter)
-        self.custom_lbl.setStyleSheet("color:#888; font-size:11px;")
+        self.custom_lbl.setStyleSheet(f"color:{T.text_dim}; font-size:11px;")
         v.addWidget(self.custom_lbl)
 
         # ---- Fine sliders ----
@@ -1929,7 +2095,7 @@ class SettingsPanel(QWidget):
             val = QLabel("")
             val.setFixedWidth(56)
             val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            val.setStyleSheet("color:#00dcc8; font-size:12px;")
+            val.setStyleSheet(f"color:{T.accent}; font-size:12px;")
             sl.valueChanged.connect(lambda raw, a=attr: self._on_slider(a, raw))
             row.addWidget(sl)
             row.addWidget(val)
@@ -1988,7 +2154,7 @@ class SettingsPanel(QWidget):
 
     def _caption(self, text):
         lbl = QLabel(text)
-        lbl.setStyleSheet("color:#bbb; font-size:12px;")
+        lbl.setStyleSheet(f"color:{T.text2}; font-size:12px;")
         return lbl
 
     def _on_slider(self, attr, raw):
@@ -2066,7 +2232,7 @@ class SettingsPanel(QWidget):
     def _on_save(self):
         if self.controller.profile_name is not None:
             self.controller.save_profile()
-        self.save_btn.setText("Saved ✓")
+        self.save_btn.setText("Saved")
         QTimer.singleShot(1200, lambda: self.save_btn.setText("Save"))
 
 
@@ -2078,7 +2244,7 @@ class ProfilesPanel(QWidget):
         self.controller = controller
         self.setWindowTitle("AirPoint Profiles")
         self.setFixedSize(360, 470)
-        self.setStyleSheet(DARK_STYLE + " ProfilesPanel { background-color: #1e1e23; }")
+        self.setStyleSheet(BASE_QSS + f" ProfilesPanel {{ background-color: {T.bg}; }}")
         self.setWindowFlags(Qt.WindowStaysOnTopHint | Qt.Tool)
 
         v = QVBoxLayout(self)
@@ -2086,26 +2252,17 @@ class ProfilesPanel(QWidget):
         v.setSpacing(10)
 
         header = QLabel("Profiles")
-        header.setFont(QFont("Segoe UI", 18, QFont.Bold))
-        header.setStyleSheet("color: #00dcc8;")
+        header.setFont(_font(18, QFont.Bold))
+        header.setStyleSheet(f"color: {T.accent};")
         v.addWidget(header)
 
         self.listw = QListWidget()
-        self.listw.setStyleSheet(
-            "QListWidget { background:#2a2a32; color:#eee; border:1px solid #3a3a44;"
-            " border-radius:8px; font-size:14px; padding:4px; }"
-            " QListWidget::item { padding:6px; }"
-            " QListWidget::item:selected { background:#1a3d38; color:#00e8a0; }")
         v.addWidget(self.listw, 1)
 
         def mkbtn(text, slot, danger=False):
             b = QPushButton(text)
             b.setCursor(Qt.PointingHandCursor)
-            if danger:
-                b.setStyleSheet("QPushButton { background:#3a2020; color:#ff7777; border:2px solid #552a2a;"
-                                " border-radius:10px; padding:8px; } QPushButton:hover { background:#4a2a2a; }")
-            else:
-                b.setObjectName("secondary")
+            b.setObjectName("danger" if danger else "secondary")
             b.clicked.connect(slot)
             return b
 
@@ -2369,6 +2526,7 @@ class HandCenterGestureController:
         """
         try:
             app = QApplication.instance() or QApplication(sys.argv)
+            apply_app_theme(app)
             from PyQt5.QtWidgets import QMessageBox
             msg = QMessageBox()
             msg.setIcon(QMessageBox.Critical)
@@ -2378,12 +2536,12 @@ class HandCenterGestureController:
             if settings_url:
                 settings_btn = msg.addButton(settings_label, QMessageBox.ActionRole)
             msg.addButton(QMessageBox.Ok)
-            msg.setStyleSheet("""
-                QMessageBox { background-color: #1e1e23; color: #ddd; }
-                QLabel { color: #ddd; font-size: 13px; }
-                QPushButton { background-color: #2a2a32; color: #ddd; border: 1px solid #444;
-                              border-radius: 6px; padding: 6px 18px; min-width: 80px; }
-                QPushButton:hover { background-color: #3a3a44; }
+            msg.setStyleSheet(f"""
+                QMessageBox {{ background-color: {T.bg}; color: {T.text}; }}
+                QLabel {{ color: {T.text}; font-size: 13px; }}
+                QPushButton {{ background-color: {T.surface}; color: {T.text}; border: 1px solid {T.border};
+                              border-radius: 6px; padding: 6px 18px; min-width: 80px; }}
+                QPushButton:hover {{ background-color: {T.surface_hover}; }}
             """)
             msg.exec_()
             if settings_btn is not None and msg.clickedButton() is settings_btn:
@@ -3944,6 +4102,7 @@ class HandCenterGestureController:
         print("Starting AirPoint controller...")
 
         app = QApplication.instance() or QApplication(sys.argv)
+        apply_app_theme(app)
 
         # --- Profile selection / calibration phase ---
         # If the user marked a profile as default (Profiles panel), auto-load it
