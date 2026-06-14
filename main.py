@@ -4399,6 +4399,9 @@ class HandCenterGestureController:
             tracking_timer.start()
 
         def on_quit():
+            # Disarm the close-event hook first so panel.close() below doesn't
+            # re-enter on_quit() from inside StatusPanel.closeEvent.
+            panel._on_close_quit = None
             tracking_timer.stop()
             panel.timer.stop()
             panel.close()
