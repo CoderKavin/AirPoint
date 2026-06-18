@@ -21,7 +21,7 @@ if sys.platform == "win32":
         stream = getattr(sys, stream_name, None)
         if stream is not None:
             try:
-                stream.reconfigure(encoding="utf-8")
+                stream.reconfigure(encoding="utf-8", errors="replace")
             except Exception:
                 pass
 
@@ -267,10 +267,13 @@ def run_app():
     main.PROFILES_DIR = os.path.join(APP_DIR, "profiles")
     main.CRASH_LOG = os.path.join(APP_DIR, "crash.log")
 
-    # Suppress console output in frozen mode
+    # Suppress console output in frozen mode. Open devnull as UTF-8 with
+    # errors="replace": even though output is discarded, Python still *encodes*
+    # the string first, and the default cp1252 codec on Windows raises
+    # UnicodeEncodeError on the emoji used in debug prints (e.g. "👁️").
     if getattr(sys, 'frozen', False):
-        sys.stdout = open(os.devnull, "w")
-        sys.stderr = open(os.devnull, "w")
+        sys.stdout = open(os.devnull, "w", encoding="utf-8", errors="replace")
+        sys.stderr = open(os.devnull, "w", encoding="utf-8", errors="replace")
 
     # Re-invoke main's __main__ logic
     sys.excepthook = main.show_crash_dialog
@@ -288,7 +291,7 @@ def run_app():
         import json
         os.makedirs(main.PROFILES_DIR, exist_ok=True)
         path = os.path.join(main.PROFILES_DIR, "default.json")
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8") as f:
             json.dump(main.DEFAULT_CONFIG, f, indent=2)
         raise SystemExit(0)
 

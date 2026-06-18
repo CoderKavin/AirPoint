@@ -28,6 +28,17 @@ import logging
 from datetime import datetime
 from collections import deque
 
+# Force UTF-8 stdout/stderr so the emoji debug prints below don't raise
+# UnicodeEncodeError on a cp1252 (charmap) console — the default on Windows.
+# errors="replace" keeps it bulletproof regardless of the underlying stream.
+for _stream_name in ("stdout", "stderr"):
+    _stream = getattr(sys, _stream_name, None)
+    if _stream is not None:
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
 # Windows DPI awareness — must be set before any GUI calls so pyautogui
 # coordinates match the actual screen resolution on high-DPI displays.
 if sys.platform == "win32":
@@ -140,7 +151,13 @@ DEFAULT_CONFIG = {
         "radius": 30,
         "duration": 1.5,
     },
-    "gaze_detection_enabled": True,
+    "gaze_detection_enabled": False,
+    # Accessibility: when on, the cursor follows the hand in ANY pose (no need to
+    # hold it open) and a quick finger movement fires a single left click. Drag,
+    # scroll, right-click and double-click are intentionally disabled in this mode.
+    "limited_mode": False,
+    # Limited-mode click sensitivity, 1 (needs a big flick) to 10 (tiny flick).
+    "limited_click_sensitivity": 6,
     "click_feedback": True,
     # Per-gesture actions. pinch + fist are user-remappable to discrete clicks
     # (see _do_action); the others are structural (drag / scroll / move) and fixed.
@@ -152,6 +169,19 @@ DEFAULT_CONFIG = {
         "open_hand": "cursor_move",
     },
 }
+
+# Limited-mode flick-click: the finger-deviation (hand-size-normalized) needed
+# to fire a click, mapped from limited_click_sensitivity (1-10). Sensitivity 10
+# → smallest required flick (FLICK_MIN); 1 → largest (FLICK_MAX).
+LIMITED_FLICK_MIN = 0.30
+LIMITED_FLICK_MAX = 0.95
+
+
+def limited_flick_threshold(sensitivity):
+    """Map a 1-10 sensitivity to the flick deviation threshold."""
+    s = max(1, min(10, int(sensitivity)))
+    return LIMITED_FLICK_MAX - (s - 1) / 9.0 * (LIMITED_FLICK_MAX - LIMITED_FLICK_MIN)
+
 
 # Actions a remappable gesture (pinch / fist) can be bound to, with UI labels.
 ACTION_LABELS = [
@@ -1358,6 +1388,19 @@ class SetupWizard(QWidget):
         btn_row.addStretch()
         vbox.addLayout(btn_row)
 
+        # Accessibility: skip pinch/fist calibration entirely and use Limited mode
+        # (cursor follows the hand in any pose; a quick finger flick clicks).
+        self._limited_btn = QPushButton("Can't pinch? Use Limited mode (no calibration)")
+        self._limited_btn.setObjectName("secondary")
+        self._limited_btn.setCursor(Qt.PointingHandCursor)
+        self._limited_btn.clicked.connect(self._start_limited)
+        lim_row = QHBoxLayout()
+        lim_row.addStretch()
+        lim_row.addWidget(self._limited_btn)
+        lim_row.addStretch()
+        vbox.addSpacing(4)
+        vbox.addLayout(lim_row)
+
         return page
 
     def _build_calibration_page(self):
@@ -1559,6 +1602,25 @@ class SetupWizard(QWidget):
         self._update_cal_display()
         self.stacked.setCurrentIndex(4)
         self.timer.start()
+
+    def _start_limited(self):
+        """Accessibility bypass: create an uncalibrated profile that runs in
+        Limited mode (move + flick-click, any hand pose) — no pinch/fist needed."""
+        self.timer.stop()
+        c = self.controller
+        c.limited_mode = True
+        c.calibration = None        # uncalibrated → relative cursor movement
+        c.pinch_threshold = None
+        c.fist_threshold = None
+        if not c.profile_name:
+            c.profile_name = self.profile_name or "default"
+        self.profile_name = c.profile_name
+        try:
+            c.save_profile()
+        except Exception as e:
+            print(f"Could not save Limited-mode profile: {e}")
+        print(f"Limited mode set up for '{self.profile_name}' (no calibration).")
+        self._finish("completed")
 
     def _update_cal_display(self):
         DIRECTIONS = ["LEFT", "RIGHT", "UP", "DOWN"]
@@ -1940,10 +2002,14 @@ class StatusPanel(QWidget):
         self.pause_switch = Switch()
         self.gaze_switch = Switch()
         self.dwell_switch = Switch()
+        self.limited_switch = Switch()
         card.add_row(make_row("Pause tracking", self.pause_switch))
         card.add_row(make_row(_split_toggle(S("panel_gaze_on")), self.gaze_switch))
         card.add_row(make_row(_split_toggle(S("panel_dwell_on")), self.dwell_switch))
+        card.add_row(make_row("Limited mode  —  move + click without opening your hand",
+                              self.limited_switch))
         root.addWidget(card)
+        self.limited_switch.toggled.connect(self._on_limited_switch)
         self.pause_switch.toggled.connect(self._on_pause_switch)
         self.gaze_switch.toggled.connect(self._on_gaze_switch)
         self.dwell_switch.toggled.connect(self._on_dwell_switch)
@@ -2024,6 +2090,13 @@ class StatusPanel(QWidget):
             self.controller.toggle_dwell_click()
         self._update_status()
 
+    def _on_limited_switch(self, checked):
+        if self._syncing:
+            return
+        if checked != bool(getattr(self.controller, 'limited_mode', False)):
+            self.controller.toggle_limited_mode()
+        self._update_status()
+
     def _open_settings(self):
         self._open_control('settings')
 
@@ -2056,6 +2129,7 @@ class StatusPanel(QWidget):
         self.pause_switch.setChecked(bool(getattr(c, 'paused', False)))
         self.gaze_switch.setChecked(bool(c.gaze_detection_enabled))
         self.dwell_switch.setChecked(bool(c.dwell_click_enabled))
+        self.limited_switch.setChecked(bool(getattr(c, 'limited_mode', False)))
         self._syncing = False
 
         # -- Status pill --
@@ -2246,6 +2320,41 @@ class SettingsPanel(QWidget):
         gcard.add_row(make_row("Fist does", self.fist_combo))
         v.addWidget(gcard)
 
+        # ---- Limited mode (accessibility) ----
+        v.addWidget(section_label("LIMITED MODE"))
+        lcard = Card()
+        self.limited_cb = Switch()
+        lcard.add_row(make_row("Move + click without opening your hand", self.limited_cb))
+        # Flick-click sensitivity slider (1-10; higher = a smaller finger flick clicks).
+        lrow = QWidget()
+        lrv = QVBoxLayout(lrow)
+        lrv.setContentsMargins(14, 10, 14, 10)
+        lrv.setSpacing(7)
+        ltop = QHBoxLayout()
+        ltop.setSpacing(8)
+        lcap = QLabel("Click sensitivity")
+        lcap.setFont(_font(13))
+        lcap.setStyleSheet(f"color: {T.text};")
+        self.flick_val = QLabel("")
+        self.flick_val.setFont(_font(12, QFont.DemiBold))
+        self.flick_val.setStyleSheet(f"color: {T.accent};")
+        self.flick_val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        ltop.addWidget(lcap)
+        ltop.addStretch(1)
+        ltop.addWidget(self.flick_val)
+        lrv.addLayout(ltop)
+        self.flick_slider = NoScrollSlider(Qt.Horizontal)
+        self.flick_slider.setMinimum(1)
+        self.flick_slider.setMaximum(10)
+        self.flick_slider.setSingleStep(1)
+        self.flick_slider.setPageStep(1)
+        self.flick_slider.setCursor(Qt.PointingHandCursor)
+        self.flick_slider.valueChanged.connect(self._on_flick_sensitivity)
+        lrv.addWidget(self.flick_slider)
+        lcard.add_row(lrow)
+        v.addWidget(lcard)
+        self.limited_cb.toggled.connect(self._on_limited_toggle)
+
         v.addStretch(1)
 
         # ---- Fixed footer (Reset / Save always visible) ----
@@ -2310,6 +2419,18 @@ class SettingsPanel(QWidget):
             return
         self.controller.click_feedback_enabled = bool(checked)
 
+    def _on_limited_toggle(self, checked):
+        if self._loading:
+            return
+        if bool(checked) != bool(getattr(self.controller, "limited_mode", False)):
+            self.controller.toggle_limited_mode()
+
+    def _on_flick_sensitivity(self, raw):
+        if self._loading:
+            return
+        self.controller.limited_click_sensitivity = int(raw)
+        self.flick_val.setText(f"{int(raw)}/10")
+
     def _make_action_combo(self, gesture):
         combo = NoScrollComboBox()
         combo.setCursor(Qt.PointingHandCursor)
@@ -2336,6 +2457,10 @@ class SettingsPanel(QWidget):
             val.setText(fmt(real))
         self.dwell_cb.setChecked(bool(self.controller.dwell_click_enabled))
         self.feedback_cb.setChecked(bool(getattr(self.controller, "click_feedback_enabled", True)))
+        self.limited_cb.setChecked(bool(getattr(self.controller, "limited_mode", False)))
+        _fs = int(getattr(self.controller, "limited_click_sensitivity", 6))
+        self.flick_slider.setValue(_fs)
+        self.flick_val.setText(f"{_fs}/10")
         ga = self.controller.gesture_actions
         for gesture, combo, default in (("pinch", self.pinch_combo, "left_click"),
                                         ("fist", self.fist_combo, "right_click")):
@@ -2360,6 +2485,7 @@ class SettingsPanel(QWidget):
         c.drag_threshold = th["drag_threshold"]
         c.action_cooldown = th["action_cooldown"]
         c.dwell_click_duration = DEFAULT_CONFIG["dwell_click"]["duration"]
+        c.limited_click_sensitivity = DEFAULT_CONFIG["limited_click_sensitivity"]
         self._sync_from_controller()
 
     def _on_save(self):
@@ -2789,8 +2915,16 @@ class HandCenterGestureController:
         # Apply all defaults from DEFAULT_CONFIG first (sets every configurable attribute)
         self._apply_config(DEFAULT_CONFIG)
 
-        # Override gaze setting from constructor arg
-        self.gaze_detection_enabled = enable_gaze_detection
+        # "Pause when not looking" is opt-in per session now (see _apply_config).
+        # The enable_gaze_detection arg is kept for API/CLI compatibility but
+        # intentionally not used to auto-enable gaze on startup.
+        self.gaze_detection_enabled = False
+
+        # Limited-mode runtime state (see _limited_mode_tick). Reset on hand loss.
+        # The flick/settle thresholds are derived live from limited_click_sensitivity
+        # (set by _apply_config), so they stay in sync with the Settings slider.
+        self._limited_baseline = None      # EMA of resting finger pose
+        self._limited_click_armed = True   # one click per distinct finger flick
 
         # Non-configurable state
         self.face_detected = False
@@ -2989,6 +3123,15 @@ class HandCenterGestureController:
         if self.profile_name is not None:
             self.save_profile()
 
+    def toggle_limited_mode(self):
+        """Toggle Limited mode (simplified control for limited finger mobility)."""
+        self.limited_mode = not self.limited_mode
+        self._reset_limited()
+        print(f"Limited mode: {'ON' if self.limited_mode else 'OFF'}")
+        # Auto-save preference to profile if one is loaded
+        if self.profile_name is not None:
+            self.save_profile()
+
     def toggle_pause(self):
         """Pause/resume tracking. Paused = the tick does no detection or cursor
         control, so the cursor parks where it is until resumed."""
@@ -3034,7 +3177,13 @@ class HandCenterGestureController:
         self.dwell_click_radius = int(_clamp(dw["radius"], 5, 200, 30))
         self.dwell_click_duration = _clamp(dw["duration"], 0.3, 6.0, 1.5)
 
-        self.gaze_detection_enabled = merged["gaze_detection_enabled"]
+        # "Pause when not looking" now starts OFF for everyone (accessibility):
+        # never auto-enabled from a profile or the command line, only via the
+        # in-app toggle. We deliberately ignore the saved value so existing
+        # profiles that had it on don't surprise the user on the next launch.
+        self.gaze_detection_enabled = False
+        self.limited_mode = bool(merged.get("limited_mode", False))
+        self.limited_click_sensitivity = int(_clamp(merged.get("limited_click_sensitivity", 6), 1, 10, 6))
         self.click_feedback_enabled = merged.get("click_feedback", True)
         self.gesture_actions = dict(merged["gesture_actions"])
         self.calibration = merged["calibration"]
@@ -3082,7 +3231,7 @@ class HandCenterGestureController:
         if not os.path.exists(path):
             return False
         try:
-            with open(path, "r") as f:
+            with open(path, "r", encoding="utf-8") as f:
                 raw = json.load(f)
         except (json.JSONDecodeError, ValueError) as e:
             print(f"Error: Corrupted profile '{name}': {e}")
@@ -3130,6 +3279,7 @@ class HandCenterGestureController:
         self.scroll_accumulated = 0
         self.scroll_exit_counter = 0
         self.scroll_enter_counter = 0
+        self._reset_limited()
 
         # Print summary
         cal = self.calibration
@@ -3172,12 +3322,14 @@ class HandCenterGestureController:
                 "duration": self.dwell_click_duration,
             },
             "gaze_detection_enabled": self.gaze_detection_enabled,
+            "limited_mode": self.limited_mode,
+            "limited_click_sensitivity": self.limited_click_sensitivity,
             "click_feedback": self.click_feedback_enabled,
             "gesture_actions": self.gesture_actions,
             "language": _current_lang,
         }
         path = os.path.join(PROFILES_DIR, f"{self.profile_name}.json")
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8") as f:
             json.dump(config, f, indent=2)
         print(f"Profile '{self.profile_name}' saved to {path}")
 
@@ -3543,6 +3695,97 @@ class HandCenterGestureController:
         extended_count, _ = self.count_extended_fingers(landmarks)
         return extended_count >= 3
 
+    # ---- Limited mode (accessibility: move + single click, any hand pose) ----
+
+    def _reset_limited(self):
+        """Clear Limited-mode flick state (call on hand loss / mode switch)."""
+        self._limited_baseline = None
+        self._limited_click_armed = True
+
+    def _finger_pose_feature(self, landmarks):
+        """Fingertip positions relative to the wrist, normalized by hand size.
+        Because it's relative to the wrist and scaled by the palm, this isolates
+        finger articulation from where the hand is — so moving the hand to steer
+        the cursor barely changes it, but flicking a finger spikes it."""
+        wrist = landmarks[0]
+        mcp = landmarks[9]  # middle-finger base — stable hand-scale reference
+        scale = math.hypot(mcp[0] - wrist[0], mcp[1] - wrist[1]) or 1e-6
+        return [((landmarks[t][0] - wrist[0]) / scale,
+                 (landmarks[t][1] - wrist[1]) / scale)
+                for t in (4, 8, 12, 16, 20)]
+
+    def _move_cursor_with_hand(self, hand_center):
+        """Move the OS cursor to follow the hand — calibrated absolute mapping
+        when available, else relative deltas. Mirrors the normal cursor-control
+        path but with no open-hand requirement (used by Limited mode)."""
+        if self.calibration is not None:
+            new_x, new_y = self.map_to_screen(hand_center[0], hand_center[1])
+            try:
+                pyautogui.moveTo(new_x, new_y, duration=0)
+            except Exception as e:
+                print(f"Cursor move failed: {e}")
+        elif self.prev_hand_center is not None:
+            hand_delta_x = hand_center[0] - self.prev_hand_center[0]
+            hand_delta_y = hand_center[1] - self.prev_hand_center[1]
+            norm_dz = self.cursor_dead_zone / (max(self.screen_width, self.screen_height) * self.sensitivity)
+            if abs(hand_delta_x) > norm_dz or abs(hand_delta_y) > norm_dz:
+                screen_delta_x = hand_delta_x * self.screen_width * self.sensitivity
+                screen_delta_y = hand_delta_y * self.screen_height * self.sensitivity
+                try:
+                    current_x, current_y = pyautogui.position()
+                    new_x = max(self.screen_edge_margin, min(self.screen_width - self.screen_edge_margin, current_x + screen_delta_x))
+                    new_y = max(self.screen_edge_margin, min(self.screen_height - self.screen_edge_margin, current_y + screen_delta_y))
+                    pyautogui.moveTo(new_x, new_y, duration=0)
+                except Exception as e:
+                    print(f"Cursor move failed: {e}")
+        self.prev_hand_center = hand_center.copy()
+
+    def _limited_mode_tick(self, landmarks, hand_center, current_time):
+        """Simplified control for users with limited finger mobility: the cursor
+        follows the hand in ANY pose, and a quick finger movement fires a single
+        left click. No pinch/drag/scroll/fist/dwell — just move and click."""
+        feat = self._finger_pose_feature(landmarks)
+        clicked = False
+        # Thresholds derived from the Settings sensitivity slider. settle is a
+        # fraction of flick so it's always below it (the re-arm band can't invert).
+        flick_threshold = limited_flick_threshold(self.limited_click_sensitivity)
+        settle_threshold = flick_threshold * 0.4
+
+        if self._limited_baseline is None:
+            # First frame with this hand — adopt its pose as the resting baseline
+            # so we don't read the initial appearance as a flick.
+            self._limited_baseline = feat
+        else:
+            base = self._limited_baseline
+            # How far the fingers have deviated from the slow-moving resting pose.
+            deviation = sum(math.hypot(feat[i][0] - base[i][0],
+                                       feat[i][1] - base[i][1])
+                            for i in range(len(feat)))
+            if (self._limited_click_armed and
+                    deviation > flick_threshold and
+                    current_time - self.last_action_time > self.action_cooldown):
+                # Always a single left click (no double-click / remapping here).
+                self._do_action("left_click")
+                self.last_action_time = current_time
+                self._limited_click_armed = False
+                clicked = True
+                print("Limited click")
+            elif not self._limited_click_armed and deviation < settle_threshold:
+                # Fingers returned to rest — ready for the next click.
+                self._limited_click_armed = True
+
+            # Let the baseline drift toward the current pose so a deliberately
+            # held position re-arms instead of latching a click forever.
+            alpha = 0.15
+            self._limited_baseline = [
+                (base[i][0] * (1 - alpha) + feat[i][0] * alpha,
+                 base[i][1] * (1 - alpha) + feat[i][1] * alpha)
+                for i in range(len(feat))
+            ]
+
+        self._move_cursor_with_hand(hand_center)
+        return "left_click" if clicked else "cursor_control"
+
     def detect_face_and_gaze(self, frame):
         """Detect if user's face is visible and roughly looking at screen"""
         # If gaze detection is disabled, always return True
@@ -3750,12 +3993,19 @@ class HandCenterGestureController:
             self.dwell_reference_pos = None
             self.dwell_start_time = None
             self.dwell_triggered = False
+            self._reset_limited()
             return "safety_disabled" if self.gaze_detection_enabled else "disabled"
 
         current_time = time.time()
 
         # Calculate hand center
         hand_center = self.calculate_hand_center(landmarks)
+
+        # LIMITED MODE: simplified control for limited finger mobility — cursor
+        # follows the hand in any pose and a quick finger movement single-clicks.
+        # Bypasses the whole pinch/drag/scroll/fist/dwell pipeline below.
+        if self.limited_mode:
+            return self._limited_mode_tick(landmarks, hand_center, current_time)
 
         # Get key finger positions for pinch detection
         thumb_tip = landmarks[4]
@@ -4240,6 +4490,7 @@ class HandCenterGestureController:
                 self.scroll_exit_counter = 0
                 self.scroll_enter_counter = 0
                 self._reset_dwell()
+                self._reset_limited()
                 self._last_gesture = "paused"
                 return
 
@@ -4281,6 +4532,7 @@ class HandCenterGestureController:
                 self.scroll_exit_counter = 0
                 self.scroll_enter_counter = 0
                 self._reset_dwell()
+                self._reset_limited()
 
             if _bench is not None:
                 _bench.record(_t0, _t1, _t2, time.perf_counter(),
@@ -4329,13 +4581,16 @@ class HandCenterGestureController:
         if self.profile_name is None:
             default = self.get_default_profile()
             if default and self.load_profile(default):
-                if self.calibration is None:
+                if self.calibration is None and not self.limited_mode:
                     # Default profile was never calibrated — don't trap the user
                     # in its calibration flow; fall back to the normal picker.
+                    # (Limited mode needs no calibration, so it's exempt.)
                     self.profile_name = None
                 else:
                     print(f"Auto-loaded default profile '{default}'.")
-        if self.profile_name is not None and self.calibration is not None:
+        # A profile is ready to run if it's calibrated OR it uses Limited mode
+        # (which works uncalibrated via relative cursor movement).
+        if self.profile_name is not None and (self.calibration is not None or self.limited_mode):
             print(f"Using pre-loaded profile '{self.profile_name}'.")
         else:
             wizard = SetupWizard(self)
@@ -4431,10 +4686,12 @@ class HandCenterGestureController:
         print("AirPoint stopped.")
 
 if __name__ == "__main__":
-    # In production (frozen exe), suppress all console output
+    # In production (frozen exe), suppress all console output. Open devnull as
+    # UTF-8 (errors="replace") so the emoji debug prints can't raise
+    # UnicodeEncodeError on a cp1252 stream — same reason as airpoint_entry.py.
     if FROZEN:
-        sys.stdout = open(os.devnull, "w")
-        sys.stderr = open(os.devnull, "w")
+        sys.stdout = open(os.devnull, "w", encoding="utf-8", errors="replace")
+        sys.stderr = open(os.devnull, "w", encoding="utf-8", errors="replace")
 
     # Install global exception hook so crashes inside Qt event loops also get caught
     sys.excepthook = show_crash_dialog
@@ -4459,7 +4716,7 @@ if __name__ == "__main__":
     if args.generate_default:
         os.makedirs(PROFILES_DIR, exist_ok=True)
         path = os.path.join(PROFILES_DIR, "default.json")
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8") as f:
             json.dump(DEFAULT_CONFIG, f, indent=2)
         print(f"Default profile written to {path}")
         raise SystemExit(0)
