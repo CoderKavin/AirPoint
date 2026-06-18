@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>Critter Games (AirPoint practice)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&display=swap" rel="stylesheet">
+<style>
+  /* Critter Games: calm, click-to-choose mini-games for young kids (~6) to
+     practise controlling the cursor with AirPoint. Six games:
+       Find it  : recognise a named picture and click it
+       Match it : click the picture that is the same as the sample
+       Pop it   : click the critter to pop it (pure aim + click practice)
+       Scroll it: scroll down to find the critter, then click it (scroll practice)
+       Count it : count the critters, click the right number (early numbers)
+       Big/small: click the big or the small one (size words)
+     Picks are by CLICK only (no accidental hover selects). Self-contained:
+     no assets, no libraries. Works the same in Edge/Chrome on Windows. */
+  :root{
+    --bg1:#bfe9ff; --bg2:#d8f5e3; --ink:#2b3a55;
+    --card:#ffffff; --accent:#ff8a3a; --good:#39d98a; --pink:#ff8fab;
+  }
+  *{ box-sizing:border-box; -webkit-user-select:none; user-select:none; -webkit-tap-highlight-color:transparent; }
+  html,body{ height:100%; margin:0; }
+  body{
+    font-family:'Fredoka','Comic Sans MS',system-ui,sans-serif; color:var(--ink);
+    background:linear-gradient(160deg,var(--bg1),var(--bg2)); overflow:hidden;
+    /* No custom cursor here on purpose: AirPoint's big Kids-mode cursor is the
+       single cursor that should always show over the game. */
+  }
+  .screen{ position:fixed; inset:0; display:flex; flex-direction:column; }
+  .hide{ display:none !important; }
+
+  /* Home */
+  #home{ align-items:center; justify-content:center; gap:26px; text-align:center; padding:24px; overflow-y:auto; }
+  #home h1{ font-size:clamp(38px,6vw,64px); margin:0; }
+  #home .sub{ font-size:clamp(18px,3vw,26px); opacity:.7; margin:-8px 0 4px; }
+  .tiles{ display:flex; flex-wrap:wrap; gap:clamp(16px,2.5vw,30px); justify-content:center; max-width:1100px; }
+  .tile{ width:clamp(140px,18vw,200px); height:clamp(140px,18vw,200px); border-radius:34px;
+    background:var(--card); box-shadow:0 16px 34px rgba(43,58,85,.18);
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px;
+    font-size:clamp(60px,9vw,92px); transition:transform .12s ease, box-shadow .12s ease; }
+  .tile .label{ font-size:clamp(18px,2.4vw,24px); font-weight:700; }
+  .tile:hover{ transform:scale(1.06); box-shadow:0 22px 44px rgba(43,58,85,.28); }
+
+  /* Game shell */
+  .topbar{ display:flex; align-items:center; justify-content:space-between; padding:14px 26px; }
+  .homebtn{ font-family:inherit; font-size:24px; font-weight:700; background:var(--card);
+    border:none; border-radius:18px; padding:9px 18px; box-shadow:0 8px 18px rgba(43,58,85,.16);
+    transition:transform .12s ease; }
+  .homebtn:hover{ transform:scale(1.06); }
+  .stars{ font-size:28px; letter-spacing:2px; min-height:36px; }
+  .prompt{ text-align:center; padding:4px 20px 2px; }
+  .prompt .say{ font-size:clamp(24px,3.6vw,36px); font-weight:600; }
+  .prompt .target{ font-size:clamp(64px,9vw,104px); line-height:1.05; min-height:1px;
+    filter:drop-shadow(0 6px 10px rgba(0,0,0,.15)); animation:breathe 2.2s ease-in-out infinite; }
+  @keyframes breathe{ 0%,100%{transform:scale(1)} 50%{transform:scale(1.07)} }
+
+  .board{ flex:1; position:relative; display:flex; flex-wrap:wrap; align-content:center;
+    align-items:center; justify-content:center; gap:clamp(22px,4vw,56px); padding:16px 40px 50px; }
+  /* Scroll game: vertical scrollable strip */
+  .board.scroll{ flex-wrap:nowrap; flex-direction:column; align-items:center; justify-content:flex-start;
+    overflow-y:auto; gap:28px; padding:24px 40px 120px; scroll-behavior:smooth; }
+
+  .card{ position:relative; flex:0 0 auto; width:clamp(120px,19vw,200px); height:clamp(120px,19vw,200px);
+    border-radius:34px; background:var(--card); box-shadow:0 14px 30px rgba(43,58,85,.18);
+    display:flex; align-items:center; justify-content:center; font-size:clamp(70px,11vw,118px);
+    transition:transform .12s ease, box-shadow .12s ease; }
+  .card .emoji{ pointer-events:none; }
+  .card:hover{ transform:scale(1.07); box-shadow:0 22px 44px rgba(43,58,85,.30); }
+  .card.num{ font-size:clamp(56px,8vw,96px); font-weight:700; color:var(--accent); }
+  .card.sel{ outline:6px solid var(--accent); outline-offset:4px; }
+  .card.win{ animation:pop .8s ease; }
+  .card.nope{ animation:shake .5s ease; }
+  @keyframes pop{ 0%{transform:scale(1)} 35%{transform:scale(1.28)} 100%{transform:scale(1)} }
+  @keyframes shake{ 0%,100%{transform:translateX(0)} 20%{transform:translateX(-13px)} 60%{transform:translateX(13px)} }
+
+  /* Count game: critters shown above the number choices */
+  .countwrap{ display:flex; flex-direction:column; align-items:center; gap:18px; width:100%;
+    max-height:100%; overflow-y:auto; }
+  .critters{ display:flex; flex-wrap:wrap; justify-content:center; gap:14px; max-width:720px; }
+  .critters .crit{ font-size:clamp(40px,5.5vw,76px); }
+  .choices{ display:flex; gap:clamp(18px,3.5vw,44px); flex-wrap:wrap; justify-content:center; }
+
+  /* Pop game bubble */
+  .bubble{ position:absolute; width:clamp(120px,17vw,170px); height:clamp(120px,17vw,170px);
+    border-radius:50%; background:rgba(255,255,255,.85); box-shadow:0 12px 26px rgba(43,58,85,.2);
+    display:flex; align-items:center; justify-content:center; font-size:clamp(68px,10vw,104px);
+    animation:bob 1.8s ease-in-out infinite; transition:transform .1s ease; }
+  .bubble:hover{ transform:scale(1.08); }
+  @keyframes bob{ 0%,100%{ margin-top:0 } 50%{ margin-top:-8px } }
+
+  /* Scroll hint */
+  #scrollHint{ position:fixed; bottom:18px; left:50%; transform:translateX(-50%); z-index:7;
+    font-size:46px; animation:bobHint 1s ease-in-out infinite; pointer-events:none; }
+  @keyframes bobHint{ 0%,100%{ transform:translate(-50%,0) } 50%{ transform:translate(-50%,10px) } }
+
+  /* Overlays + toast */
+  .overlay{ position:fixed; inset:0; display:flex; flex-direction:column; align-items:center;
+    justify-content:center; gap:20px; text-align:center; background:rgba(255,255,255,.6);
+    backdrop-filter:blur(3px); z-index:6; }
+  .overlay h1{ font-size:clamp(40px,6vw,60px); margin:0; }
+  .bigbtn{ font-family:inherit; font-size:clamp(26px,3.6vw,38px); font-weight:700; color:#fff;
+    background:linear-gradient(180deg,#ffb03a,#ff8a3a); border:none; padding:20px 52px;
+    border-radius:26px; box-shadow:0 12px 24px rgba(255,138,58,.4); transition:transform .12s ease; }
+  .bigbtn:hover{ transform:scale(1.05); }
+  .cheer-emoji{ font-size:clamp(84px,13vw,124px); animation:pop .7s ease; }
+  .toast{ position:fixed; top:16%; left:50%; transform:translateX(-50%); z-index:9;
+    font-size:clamp(38px,5.5vw,60px); font-weight:700; color:var(--ink);
+    text-shadow:0 3px 0 #fff, 0 8px 16px rgba(0,0,0,.15); pointer-events:none;
+    animation:toast 1.6s ease forwards; }
+  @keyframes toast{ 0%{opacity:0; transform:translate(-50%,12px) scale(.8)}
+    18%{opacity:1; transform:translate(-50%,0) scale(1)} 75%{opacity:1} 100%{opacity:0; transform:translate(-50%,-18px)} }
+
+  canvas#fx{ position:fixed; inset:0; pointer-events:none; z-index:8; }
+  .hint{ position:fixed; bottom:10px; width:100%; text-align:center; font-size:16px; opacity:.4; }
+</style>
+</head>
+<body>
+
+<div class="screen" id="home">
+  <h1>🐾 Critter Games 🐾</h1>
+  <div class="sub">Pick a game!</div>
+  <div class="tiles">
+    <div class="tile" data-game="find">🔎<div class="label">Find it</div></div>
+    <div class="tile" data-game="match">🧩<div class="label">Match it</div></div>
+    <div class="tile" data-game="pop">🫧<div class="label">Pop it</div></div>
+    <div class="tile" data-game="scroll">📜<div class="label">Scroll it</div></div>
+    <div class="tile" data-game="count">🔢<div class="label">Count it</div></div>
+    <div class="tile" data-game="bigsmall">🐘<div class="label">Big or small</div></div>
+  </div>
+  <div class="hint">Move to a picture and click to choose it.</div>
+</div>
+
+<div class="screen hide" id="game">
+  <div class="topbar">
+    <button class="homebtn" id="homeBtn">🏠 Home</button>
+    <div class="stars" id="stars"></div>
+  </div>
+  <div class="prompt" id="prompt">
+    <div class="say" id="say"></div>
+    <div class="target" id="target"></div>
+  </div>
+  <div class="board" id="board"></div>
+</div>
+
+<div id="scrollHint" class="hide">👇</div>
+
+<div class="overlay hide" id="cheerScreen">
+  <div class="cheer-emoji" id="cheerEmoji">🎉</div>
+  <h1 id="cheerText">Great job!</h1>
+  <button class="bigbtn" id="moreBtn">Keep playing!</button>
+</div>
+
+<canvas id="fx"></canvas>
+
+<script>
+(function(){
+  "use strict";
+
+  const POOL = [
+    {e:'🐱',n:'cat'},{e:'🐶',n:'dog'},{e:'🍓',n:'strawberry'},{e:'🦊',n:'fox'},
+    {e:'🐰',n:'bunny'},{e:'🐼',n:'panda'},{e:'🐸',n:'frog'},{e:'🍎',n:'apple'},
+    {e:'🍌',n:'banana'},{e:'🐯',n:'tiger'},{e:'🦁',n:'lion'},{e:'🐨',n:'koala'},
+    {e:'🐵',n:'monkey'},{e:'🐧',n:'penguin'},{e:'🐢',n:'turtle'},{e:'🦄',n:'unicorn'},
+    {e:'🐝',n:'bee'},{e:'🦋',n:'butterfly'},{e:'⭐',n:'star'},{e:'🍊',n:'orange'}
+  ];
+
+  const $ = id => document.getElementById(id);
+  const homeScreen=$('home'), gameScreen=$('game'), board=$('board'),
+        sayEl=$('say'), targetEl=$('target'), starsEl=$('stars'), scrollHint=$('scrollHint'),
+        cheerScreen=$('cheerScreen'), cheerText=$('cheerText'), cheerEmoji=$('cheerEmoji');
+
+  let stars=0, game=null, locked=false, timer=null, matchFirst=null;
+  function later(fn, ms){ clearTimeout(timer); timer=setTimeout(fn, ms); }
+
+  function goFullscreen(){
+    const el=document.documentElement;
+    const fn=el.requestFullscreen||el.webkitRequestFullscreen||el.msRequestFullscreen;
+    if(fn && !document.fullscreenElement && !document.webkitFullscreenElement){
+      try{ const r=fn.call(el); if(r&&r.catch) r.catch(function(){}); }catch(e){}
+    }
+  }
+
+  function rand(){ return Math.random(); }
+  function shuffle(a){ a=a.slice(); for(let i=a.length-1;i>0;i--){ const j=Math.floor(rand()*(i+1)); const t=a[i]; a[i]=a[j]; a[j]=t; } return a; }
+  function pickN(n){ return shuffle(POOL).slice(0,n); }
+  function pick(a){ return a[Math.floor(rand()*a.length)]; }
+  function renderStars(){ starsEl.textContent = '🏆'.repeat(Math.floor(stars/5)) + '⭐'.repeat(stars%5); }
+  function toast(msg){ const t=document.createElement('div'); t.className='toast'; t.textContent=msg; document.body.appendChild(t); setTimeout(function(){ t.remove(); },1600); }
+  function difficulty(){ return stars<4 ? 2 : 3; }
+
+  // navigation
+  function showHome(){
+    clearTimeout(timer); timer=null; matchFirst=null;
+    gameScreen.classList.add('hide'); cheerScreen.classList.add('hide'); scrollHint.classList.add('hide');
+    homeScreen.classList.remove('hide');
+    game=null; locked=false;
+  }
+  function startGame(key){
+    goFullscreen(); audioInit();
+    game=key; locked=false;
+    homeScreen.classList.add('hide'); cheerScreen.classList.add('hide');
+    gameScreen.classList.remove('hide');
+    board.className='board'; scrollHint.classList.add('hide');
+    nextRound();
+  }
+
+  // build one answer card; correct ones get data-correct
+  function answerCard(label, correct, isText){
+    const c=document.createElement('div');
+    c.className='card' + (isText ? ' num' : '');
+    if(correct) c.dataset.correct='1';
+    c.innerHTML = isText ? label : ('<span class="emoji">'+label+'</span>');
+    return c;
+  }
+
+  // set up the next round for the current game
+  function nextRound(){
+    if(!game) return;                       // a stray timer must not run after Home
+    cheerScreen.classList.add('hide'); scrollHint.classList.add('hide');
+    locked=false; matchFirst=null;
+    board.onscroll=null;                    // detach the scroll-game hint handler
+    board.className='board'; board.innerHTML=''; targetEl.textContent='';
+    if(game==='find') setupFind();
+    else if(game==='match') setupMatch();
+    else if(game==='pop') setupPop();
+    else if(game==='scroll') setupScroll();
+    else if(game==='count') setupCount();
+    else if(game==='bigsmall') setupBigSmall();
+  }
+
+  function setupFind(){
+    const picks=pickN(difficulty());
+    const t=pick(picks);
+    sayEl.textContent='Find the '+t.n+'!';
+    targetEl.textContent=t.e;
+    shuffle(picks).forEach(function(it){ board.appendChild(answerCard(it.e, it.n===t.n)); });
+  }
+  function setupMatch(){
+    // Real pairs game: tap the two cards that are the same.
+    matchFirst=null;
+    const pairs=pickN(2);                    // two distinct critters
+    sayEl.textContent='Tap the two that are the SAME!';
+    targetEl.textContent='';
+    const cards=[];
+    pairs.forEach(function(it){
+      for(let i=0;i<2;i++){ const c=answerCard(it.e,false); c.dataset.name=it.n; cards.push(c); }
+    });
+    shuffle(cards).forEach(function(c){ board.appendChild(c); });
+  }
+  function chooseMatch(card){
+    if(locked || card===matchFirst) return;
+    card.classList.add('sel');
+    if(!matchFirst){ matchFirst=card; return; }
+    if(card.dataset.name===matchFirst.dataset.name){
+      locked=true;
+      card.classList.add('win'); matchFirst.classList.add('win'); matchFirst=null;
+      stars++; renderStars(); confettiBurst(); beepGood(); toast(pick(['Match!','Yay!','Great!']));
+      if(stars>0 && stars%5===0) later(cheer,1100); else later(nextRound,1700);
+    } else {
+      const first=matchFirst; matchFirst=null;
+      card.classList.add('nope'); first.classList.add('nope'); beepOops(); toast('Try again!');
+      setTimeout(function(){ card.classList.remove('nope','sel'); first.classList.remove('nope','sel'); },520);
+    }
+  }
+  function setupCount(){
+    const item=pickN(1)[0];
+    const count=2+Math.floor(rand()*4);          // 2..5 critters
+    sayEl.textContent='How many '+item.n+'s?';
+    targetEl.textContent='';
+    const wrap=document.createElement('div'); wrap.className='countwrap';
+    const row=document.createElement('div'); row.className='critters';
+    for(let i=0;i<count;i++){ const s=document.createElement('span'); s.className='crit'; s.textContent=item.e; row.appendChild(s); }
+    const choices=document.createElement('div'); choices.className='choices';
+    const opts=new Set([count]);
+    while(opts.size<3){ const d=2+Math.floor(rand()*4); opts.add(d); }
+    shuffle(Array.from(opts)).forEach(function(num){ choices.appendChild(answerCard(String(num), num===count, true)); });
+    wrap.appendChild(row); wrap.appendChild(choices); board.appendChild(wrap);
+  }
+  function setupBigSmall(){
+    const item=pickN(1)[0];
+    const wantBig = rand()<0.5;
+    sayEl.textContent = wantBig ? 'Click the BIG one!' : 'Click the small one!';
+    targetEl.textContent='';
+    const big=answerCard(item.e, wantBig);  big.style.fontSize='clamp(110px,18vw,200px)';
+    const small=answerCard(item.e, !wantBig); small.style.fontSize='clamp(46px,7vw,78px)';
+    shuffle([big,small]).forEach(function(c){ board.appendChild(c); });
+  }
+  function setupScroll(){
+    const target=pickN(1)[0];
+    const distract=shuffle(POOL.filter(function(p){ return p.n!==target.n; })).slice(0,7);
+    sayEl.textContent='Scroll down to find the '+target.n+'!';
+    targetEl.textContent=target.e;
+    board.className='board scroll';
+    // distractors first, target placed near the bottom so they must scroll
+    const list=distract.slice(0,5).concat([target]).concat(distract.slice(5));
+    list.forEach(function(it){ board.appendChild(answerCard(it.e, it.n===target.n)); });
+    board.scrollTop=0;
+    scrollHint.classList.remove('hide');
+    board.onscroll=function(){
+      if(board.scrollTop + board.clientHeight >= board.scrollHeight - 40) scrollHint.classList.add('hide');
+      else if(!locked) scrollHint.classList.remove('hide');
+    };
+  }
+  function setupPop(){
+    sayEl.textContent='Pop the critter!';
+    targetEl.textContent='👇';
+    spawnBubble();
+  }
+  function spawnBubble(){
+    if(game!=='pop') return;
+    board.className='board'; board.innerHTML='';
+    const item=pickN(1)[0];
+    const b=document.createElement('div'); b.className='bubble'; b.dataset.pop='1';
+    b.innerHTML='<span class="emoji">'+item.e+'</span>';
+    const bw=board.clientWidth, bh=board.clientHeight, size=Math.min(bw,bh)*0.28;
+    b.style.left=(20+rand()*Math.max(20,(bw-size-40)))+'px';
+    b.style.top=(20+rand()*Math.max(20,(bh-size-40)))+'px';
+    board.appendChild(b);
+  }
+
+  // win / wrong handling shared by every click-to-choose game
+  function choose(card){
+    if(locked) return;
+    if(card.dataset.correct==='1'){
+      locked=true; scrollHint.classList.add('hide');
+      card.classList.add('win'); stars++; renderStars(); confettiBurst(); beepGood();
+      toast(pick(['Yay!','Great!','Woohoo!','Nice!','Well done!']));
+      if(stars>0 && stars%5===0) later(cheer,1100);
+      else later(nextRound,1700);
+    } else {
+      card.classList.add('nope'); beepOops(); toast('Try again!');
+      setTimeout(function(){ card.classList.remove('nope'); },520);
+    }
+  }
+  function popBubble(b){
+    if(!b.dataset.pop) return;
+    b.dataset.pop='';
+    stars++; renderStars(); confettiBurst(); beepGood();
+    b.style.transform='scale(0)';
+    if(stars>0 && stars%5===0) later(cheer,700);
+    else later(spawnBubble,550);
+  }
+
+  function cheer(){
+    if(!game) return;
+    cheerEmoji.textContent=pick(['🎉','🌟','🏆','🎈','🦄']);
+    cheerText.textContent='You got '+stars+' stars!';
+    cheerScreen.classList.remove('hide'); confettiBurst(); confettiBurst();
+  }
+  function continueAfterCheer(){
+    if(cheerScreen.classList.contains('hide')) return;
+    cheerScreen.classList.add('hide');
+    if(game==='pop') spawnBubble(); else nextRound();
+  }
+
+  // CLICK to choose (no dwell)
+  document.addEventListener('click', function(e){
+    const tile=e.target.closest('.tile'); if(tile){ startGame(tile.dataset.game); return; }
+    if(e.target.closest('#homeBtn')){ showHome(); return; }
+    if(e.target.closest('#moreBtn')){ continueAfterCheer(); return; }
+    const bubble=e.target.closest('.bubble'); if(bubble){ popBubble(bubble); return; }
+    const card=e.target.closest('.card');
+    if(card){ if(game==='match') chooseMatch(card); else choose(card); return; }
+  });
+  window.addEventListener('pointerdown', function once(){ goFullscreen(); window.removeEventListener('pointerdown', once); });
+
+  // Scroll game: route ANY wheel (incl. AirPoint's edge-hover scroll, which posts
+  // an OS wheel event wherever the cursor is pinned) to the card strip, so it
+  // works on Windows even when the cursor sits over the top bar, not the strip.
+  window.addEventListener('wheel', function(e){
+    if(game==='scroll' && !board.contains(e.target)) board.scrollTop += e.deltaY;
+  }, {passive:true});
+
+  // confetti + sound
+  const cv=$('fx'), ctx=cv.getContext('2d');
+  function sizeCanvas(){ cv.width=innerWidth; cv.height=innerHeight; }
+  sizeCanvas(); window.addEventListener('resize', sizeCanvas);
+  let parts=[], fxRunning=false;
+  const COLORS=['#ff8fab','#ffd23f','#39d98a','#5bc8ff','#b693ff','#ff8a3a'];
+  function confettiBurst(){
+    const cx=innerWidth/2, cy=innerHeight*0.42;
+    for(let i=0;i<60;i++){ const a=rand()*Math.PI*2, sp=4+rand()*9;
+      parts.push({x:cx,y:cy,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp-4,c:COLORS[i%COLORS.length],r:5+rand()*7,life:1}); }
+    if(!fxRunning){ fxRunning=true; requestAnimationFrame(fxLoop); }
+  }
+  function fxLoop(){
+    ctx.clearRect(0,0,cv.width,cv.height);
+    parts=parts.filter(function(p){ return p.life>0; });
+    for(const p of parts){ p.vy+=0.32; p.x+=p.vx; p.y+=p.vy; p.life-=0.012;
+      ctx.globalAlpha=Math.max(0,p.life); ctx.fillStyle=p.c; ctx.fillRect(p.x,p.y,p.r,p.r); }
+    ctx.globalAlpha=1;
+    if(parts.length) requestAnimationFrame(fxLoop);
+    else { ctx.clearRect(0,0,cv.width,cv.height); fxRunning=false; }
+  }
+  let actx=null;
+  function audioInit(){ try{ actx=actx||new (window.AudioContext||window.webkitAudioContext)(); if(actx&&actx.state==='suspended') actx.resume(); }catch(e){} }
+  function tone(f,dur,type,when){ if(!actx) return; const o=actx.createOscillator(),g=actx.createGain();
+    o.type=type||'sine'; o.frequency.value=f; const t=actx.currentTime+(when||0);
+    g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(0.25,t+0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001,t+dur); o.connect(g); g.connect(actx.destination); o.start(t); o.stop(t+dur+0.02); }
+  function beepGood(){ tone(660,0.12,'triangle',0); tone(880,0.18,'triangle',0.1); tone(1175,0.26,'triangle',0.22); }
+  function beepOops(){ tone(300,0.2,'sine',0); }
+
+  renderStars();
+})();
+</script>
+</body>
+</html>

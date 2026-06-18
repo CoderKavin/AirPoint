@@ -10,7 +10,7 @@ For SOURCE runs (developer mode): skips the auto-updater entirely. Devs sync
 via git.
 
 Can also be invoked directly (`python launcher.py`) to run main.py without
-update checks — kept for compatibility with older autostart entries.
+update checks - kept for compatibility with older autostart entries.
 """
 
 import os
@@ -104,7 +104,7 @@ def download_file(url, dest_path):
     """Download a URL to a local path. Returns True on success.
 
     Uses urlopen (not urlretrieve) so we can pass the certifi-backed SSL
-    context — same macOS cert issue as fetch_latest_release."""
+    context - same macOS cert issue as fetch_latest_release."""
     try:
         with urllib.request.urlopen(url, timeout=120, context=_ssl_context()) as resp, \
                 open(dest_path, "wb") as out:
@@ -290,7 +290,7 @@ def _apply_update_windows(zip_path):
         # Wait for the parent to exit, then MIRROR the new build over the install
         # in place with robocopy. The old approach (rmdir the install dir, then
         # move the new one in) deleted the install FIRST, so any failure of the
-        # move — a locked file, or %TEMP% on a different volume — left the folder
+        # move - a locked file, or %TEMP% on a different volume - left the folder
         # gone and produced "The system cannot find the path specified", wrecking
         # the install. robocopy /MIR updates in place and retries locked files;
         # protected user data was already copied into {source}, so /MIR keeps it.

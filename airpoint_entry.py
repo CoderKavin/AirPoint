@@ -1,11 +1,11 @@
 """
-AirPoint — single entry point for PyInstaller bundle.
+AirPoint - single entry point for PyInstaller bundle.
 Runs the auto-updater, then launches the main app, all in one process.
 """
 import os
 import sys
 
-# Windows DPI awareness — must be set before any GUI/pyautogui calls
+# Windows DPI awareness - must be set before any GUI/pyautogui calls
 if sys.platform == "win32":
     try:
         import ctypes
@@ -16,7 +16,7 @@ if sys.platform == "win32":
         except Exception:
             pass
     # Force UTF-8 stdout/stderr so emoji debug prints don't choke cp1252 consoles.
-    # Only relevant in source-run mode — in the frozen bundle stdout is sent to devnull.
+    # Only relevant in source-run mode - in the frozen bundle stdout is sent to devnull.
     for stream_name in ("stdout", "stderr"):
         stream = getattr(sys, stream_name, None)
         if stream is not None:
@@ -52,7 +52,7 @@ else:
 # that holds the .exe. VERSION ships INSIDE the bundle, so it must be read from
 # here. Reading it from APP_DIR (next to the exe) finds nothing, which makes the
 # updater believe the installed version is 0.0.0 and prompt to "update" on every
-# single launch — the bug behind the endless update loop.
+# single launch - the bug behind the endless update loop.
 if getattr(sys, 'frozen', False):
     BUNDLE_DIR = sys._MEIPASS
 else:
@@ -64,7 +64,7 @@ os.makedirs(os.path.join(APP_DIR, "profiles"), exist_ok=True)
 
 def run_updater():
     """Check for updates and apply one if the user accepts.
-    Exits the process via SystemExit(0) if an update is being installed —
+    Exits the process via SystemExit(0) if an update is being installed -
     the detached swap script then replaces our files and relaunches us.
     Never blocks launch on failure.
     """
@@ -123,7 +123,7 @@ def _show_dll_error(exc, log_path=None):
         root = tk.Tk()
         root.withdraw()
 
-        # If we already installed the runtime before, don't offer again —
+        # If we already installed the runtime before, don't offer again -
         # the problem is something else (needs reboot, wrong arch, etc.)
         if _vc_runtime_installed():
             details = f"\n\nA log was saved to:\n{log_path}" if log_path else ""
@@ -150,7 +150,7 @@ def _show_dll_error(exc, log_path=None):
             return
 
         answer = messagebox.askyesno(
-            "AirPoint — One-time Setup",
+            "AirPoint - One-time Setup",
             "AirPoint needs to install a small system component "
             "(Microsoft Visual C++ Runtime) to run.\n\n"
             "This is a one-time setup and only takes a moment.\n\n"
@@ -175,7 +175,7 @@ def _show_dll_error(exc, log_path=None):
             urllib.request.urlretrieve(VC_URL, installer)
             info.destroy()
 
-            # Run the installer silently — /install /passive does not need admin
+            # Run the installer silently - /install /passive does not need admin
             # and shows a small progress bar
             result = subprocess.run(
                 [installer, "/install", "/passive", "/norestart"], check=False
@@ -306,7 +306,7 @@ def run_app():
                 # creates it, but make sure the user knows defaults are in use.
                 try:
                     sys.__stderr__.write(
-                        f"AirPoint: profile '{args.profile}' not found — "
+                        f"AirPoint: profile '{args.profile}' not found - "
                         f"using defaults; will be created on first save.\n"
                     )
                 except Exception:

@@ -29,7 +29,7 @@ from datetime import datetime
 from collections import deque
 
 # Force UTF-8 stdout/stderr so the emoji debug prints below don't raise
-# UnicodeEncodeError on a cp1252 (charmap) console — the default on Windows.
+# UnicodeEncodeError on a cp1252 (charmap) console - the default on Windows.
 # errors="replace" keeps it bulletproof regardless of the underlying stream.
 for _stream_name in ("stdout", "stderr"):
     _stream = getattr(sys, _stream_name, None)
@@ -39,7 +39,7 @@ for _stream_name in ("stdout", "stderr"):
         except Exception:
             pass
 
-# Windows DPI awareness — must be set before any GUI calls so pyautogui
+# Windows DPI awareness - must be set before any GUI calls so pyautogui
 # coordinates match the actual screen resolution on high-DPI displays.
 if sys.platform == "win32":
     try:
@@ -158,6 +158,12 @@ DEFAULT_CONFIG = {
     "limited_mode": False,
     # Limited-mode click sensitivity, 1 (needs a big flick) to 10 (tiny flick).
     "limited_click_sensitivity": 6,
+    # Kids mode (for young children with jerky movement): hand moves the cursor
+    # (heavily smoothed) unless it's a fist; HOLDING a fist for kids_click_hold
+    # seconds fires one click; hovering the top/bottom screen edge scrolls. No
+    # precise/quick gestures, designed to resist accidental clicks.
+    "kids_mode": False,
+    "kids_click_hold": 1.2,   # seconds a fist must be held to click (0.5-4.0)
     "click_feedback": True,
     # Per-gesture actions. pinch + fist are user-remappable to discrete clicks
     # (see _do_action); the others are structural (drag / scroll / move) and fixed.
@@ -322,7 +328,7 @@ STRINGS = {
         "welcome_sub": "AirPoint lets you control your computer\nusing just your hand and a camera.",
         "how_title": "How it works",
         "feat_move_title": "Move the cursor",
-        "feat_move_desc": "Hold your hand open in front of the camera.\nMove your hand around — the cursor follows.",
+        "feat_move_desc": "Hold your hand open in front of the camera.\nMove your hand around - the cursor follows.",
         "feat_click_title": "Click",
         "feat_click_desc": "Pinch your thumb and the finger next to it\ntogether. Like tapping a button in the air.",
         "feat_right_title": "Right-click",
@@ -333,25 +339,25 @@ STRINGS = {
         "lets_go": "Let's Go!",
         "skip_setup": "Skip Setup",
         # Calibration
-        "cal_step1_title": "Step 1 of 4 — We need to know how far you can reach\nso the cursor covers your whole screen.",
-        "cal_step2_title": "Step 2 of 4 — We're checking how steady your hand is\nso we can reduce any shaking.",
-        "cal_step3_title": "Step 3 of 4 — This is how you'll click things\nPinching is like tapping a button in the air.",
-        "cal_step4_title": "Step 4 of 4 — This is how you'll right-click\nMaking a fist opens menus.",
+        "cal_step1_title": "Step 1 of 4 - We need to know how far you can reach\nso the cursor covers your whole screen.",
+        "cal_step2_title": "Step 2 of 4 - We're checking how steady your hand is\nso we can reduce any shaking.",
+        "cal_step3_title": "Step 3 of 4 - This is how you'll click things\nPinching is like tapping a button in the air.",
+        "cal_step4_title": "Step 4 of 4 - This is how you'll right-click\nMaking a fist opens menus.",
         "cal_move_left": "Move your hand to the LEFT",
         "cal_move_right": "Now move your hand to the RIGHT",
         "cal_move_up": "Move your hand UP",
         "cal_move_down": "Move your hand DOWN",
         "cal_hint_dir": "Press the spacebar when your hand is as far {dir} as comfortable",
-        "cal_hint_steady": "Just wait — the camera is watching your hand",
+        "cal_hint_steady": "Just wait - the camera is watching your hand",
         "cal_steady_inst": "Hold your hand still and relax",
-        "cal_pinch_inst": "Pinch your thumb and the finger next to it together — and keep holding it",
-        "cal_fist_inst": "Make a fist — close all your fingers and keep holding it",
+        "cal_pinch_inst": "Pinch your thumb and the finger next to it together - and keep holding it",
+        "cal_fist_inst": "Make a fist - close all your fingers and keep holding it",
         "cal_hint_gesture": "While holding the gesture, tap spacebar to record  (or press N to skip)",
         "cal_hold_still": "Hold still...",
-        "cal_hand_lost": "Hand lost — try again",
+        "cal_hand_lost": "Hand lost - try again",
         "cal_show_hand": "Show your hand to begin",
-        "cal_recording": "Recording — keep holding the gesture until the bar fills",
-        "cal_gesture_retry": "Didn't catch that — make the gesture and tap spacebar again",
+        "cal_recording": "Recording - keep holding the gesture until the bar fills",
+        "cal_gesture_retry": "Didn't catch that - make the gesture and tap spacebar again",
         # Done page
         "done_title": "You're all set!",
         "done_subtitle": "AirPoint is ready. Here's a quick reminder:",
@@ -366,12 +372,12 @@ STRINGS = {
         "done_extras_title": "You can also turn these on later:",
         "done_extras_gaze": (
             "<b style='color:#ccc;'>Pause when not looking</b> "
-            "<span style='color:#888;'>— AirPoint pauses if you look away "
+            "<span style='color:#888;'>- AirPoint pauses if you look away "
             "from the screen, so it won't move the cursor by accident.</span>"
         ),
         "done_extras_dwell": (
             "<b style='color:#ccc;'>Auto-click</b> "
-            "<span style='color:#888;'>— If you hold your hand still over something "
+            "<span style='color:#888;'>- If you hold your hand still over something "
             "for a moment, AirPoint clicks it for you automatically.</span>"
         ),
         "autostart_label": "Start AirPoint when computer turns on",
@@ -388,15 +394,15 @@ STRINGS = {
         "panel_pinch_drag": "Keep pinching to drag...",
         "panel_auto_clicked": "Auto-clicked!",
         "panel_look_screen": "Look at screen to start",
-        "panel_ready": "Ready — move your hand",
-        "panel_gaze_on": "  Pause when not looking  —  ON\n  AirPoint pauses if you look away from the screen",
-        "panel_gaze_off": "  Pause when not looking  —  OFF\n  Tap here to turn this on",
-        "panel_dwell_on": "  Auto-click when you hold still  —  ON\n  Clicks for you after staying in one spot",
-        "panel_dwell_off": "  Auto-click when you hold still  —  OFF\n  Tap here to turn this on",
+        "panel_ready": "Ready - move your hand",
+        "panel_gaze_on": "  Pause when not looking  -  ON\n  AirPoint pauses if you look away from the screen",
+        "panel_gaze_off": "  Pause when not looking  -  OFF\n  Tap here to turn this on",
+        "panel_dwell_on": "  Auto-click when you hold still  -  ON\n  Clicks for you after staying in one spot",
+        "panel_dwell_off": "  Auto-click when you hold still  -  OFF\n  Tap here to turn this on",
         "panel_redo": "Redo Setup",
         "panel_stop": "Stop AirPoint",
         # Crash
-        "crash_title": "AirPoint — Something went wrong",
+        "crash_title": "AirPoint - Something went wrong",
         "crash_msg": "AirPoint ran into an unexpected error and needs to close.\n\nYour profiles and settings are safe.",
     },
     "hi": {
@@ -424,36 +430,36 @@ STRINGS = {
         "welcome_sub": "AirPoint आपको सिर्फ़ अपने हाथ और\nकैमरे से कंप्यूटर चलाने देता है।",
         "how_title": "यह कैसे काम करता है",
         "feat_move_title": "कर्सर हिलाएँ",
-        "feat_move_desc": "कैमरे के सामने हाथ खोलकर रखें।\nहाथ हिलाएँ — कर्सर भी हिलेगा।",
+        "feat_move_desc": "कैमरे के सामने हाथ खोलकर रखें।\nहाथ हिलाएँ - कर्सर भी हिलेगा।",
         "feat_click_title": "क्लिक करें",
         "feat_click_desc": "अंगूठे और उसके बगल वाली उँगली को\nजोड़ें। हवा में बटन दबाने जैसा है।",
         "feat_right_title": "राइट-क्लिक",
-        "feat_right_desc": "मुट्ठी बंद करें — राइट-क्लिक होगा।\nइससे मेनू खुलता है।",
+        "feat_right_desc": "मुट्ठी बंद करें - राइट-क्लिक होगा।\nइससे मेनू खुलता है।",
         "feat_scroll_title": "स्क्रॉल करें",
         "feat_scroll_desc": "दो उँगलियाँ ऊपर उठाएँ और\nऊपर-नीचे हिलाकर पेज स्क्रॉल करें।",
         "setup_note": "पहले, एक छोटा-सा 30 सेकंड का सेटअप चाहिए\nताकि AirPoint आपके हाथ की गति सीख सके।",
         "lets_go": "चलो शुरू करें!",
         "skip_setup": "सेटअप छोड़ें",
         # Calibration
-        "cal_step1_title": "चरण 1 / 4 — हमें जानना है कि आप कितनी दूर तक पहुँच सकते हैं\nताकि कर्सर पूरी स्क्रीन पर चले।",
-        "cal_step2_title": "चरण 2 / 4 — हम देख रहे हैं कि आपका हाथ कितना स्थिर है\nताकि हम कंपन कम कर सकें।",
-        "cal_step3_title": "चरण 3 / 4 — इससे आप क्लिक करेंगे\nचुटकी बजाना = हवा में बटन दबाना।",
-        "cal_step4_title": "चरण 4 / 4 — इससे आप राइट-क्लिक करेंगे\nमुट्ठी बंद करने से मेनू खुलता है।",
+        "cal_step1_title": "चरण 1 / 4 - हमें जानना है कि आप कितनी दूर तक पहुँच सकते हैं\nताकि कर्सर पूरी स्क्रीन पर चले।",
+        "cal_step2_title": "चरण 2 / 4 - हम देख रहे हैं कि आपका हाथ कितना स्थिर है\nताकि हम कंपन कम कर सकें।",
+        "cal_step3_title": "चरण 3 / 4 - इससे आप क्लिक करेंगे\nचुटकी बजाना = हवा में बटन दबाना।",
+        "cal_step4_title": "चरण 4 / 4 - इससे आप राइट-क्लिक करेंगे\nमुट्ठी बंद करने से मेनू खुलता है।",
         "cal_move_left": "अपना हाथ बाईं ओर ले जाएँ",
         "cal_move_right": "अब दाईं ओर ले जाएँ",
         "cal_move_up": "अपना हाथ ऊपर ले जाएँ",
         "cal_move_down": "अपना हाथ नीचे ले जाएँ",
         "cal_hint_dir": "जब हाथ {dir} तक पहुँच जाए तो स्पेसबार दबाएँ",
-        "cal_hint_steady": "बस रुकें — कैमरा आपका हाथ देख रहा है",
+        "cal_hint_steady": "बस रुकें - कैमरा आपका हाथ देख रहा है",
         "cal_steady_inst": "अपना हाथ स्थिर रखें और आराम करें",
-        "cal_pinch_inst": "अंगूठे और बगल वाली उँगली को जोड़ें — और ऐसे ही पकड़े रहें",
-        "cal_fist_inst": "मुट्ठी बंद करें — सारी उँगलियाँ बंद रखें और पकड़े रहें",
+        "cal_pinch_inst": "अंगूठे और बगल वाली उँगली को जोड़ें - और ऐसे ही पकड़े रहें",
+        "cal_fist_inst": "मुट्ठी बंद करें - सारी उँगलियाँ बंद रखें और पकड़े रहें",
         "cal_hint_gesture": "इशारा बनाए रखते हुए स्पेसबार दबाएँ रिकॉर्ड के लिए  (या N दबाएँ छोड़ने के लिए)",
         "cal_hold_still": "स्थिर रहें...",
-        "cal_hand_lost": "हाथ नहीं दिखा — फिर कोशिश करें",
+        "cal_hand_lost": "हाथ नहीं दिखा - फिर कोशिश करें",
         "cal_show_hand": "अपना हाथ दिखाएँ",
-        "cal_recording": "रिकॉर्ड हो रहा है — बार भरने तक इशारा ऐसे ही रखें",
-        "cal_gesture_retry": "पकड़ नहीं पाया — इशारा बनाकर फिर स्पेसबार दबाएँ",
+        "cal_recording": "रिकॉर्ड हो रहा है - बार भरने तक इशारा ऐसे ही रखें",
+        "cal_gesture_retry": "पकड़ नहीं पाया - इशारा बनाकर फिर स्पेसबार दबाएँ",
         # Done page
         "done_title": "सब तैयार है!",
         "done_subtitle": "AirPoint तैयार है। याद रखें:",
@@ -468,12 +474,12 @@ STRINGS = {
         "done_extras_title": "ये सुविधाएँ बाद में भी चालू कर सकते हैं:",
         "done_extras_gaze": (
             "<b style='color:#ccc;'>न देखने पर रुकें</b> "
-            "<span style='color:#888;'>— अगर आप स्क्रीन से नज़र हटाएँ "
+            "<span style='color:#888;'>- अगर आप स्क्रीन से नज़र हटाएँ "
             "तो AirPoint रुक जाएगा, ताकि गलती से कर्सर न हिले।</span>"
         ),
         "done_extras_dwell": (
             "<b style='color:#ccc;'>अपने-आप क्लिक</b> "
-            "<span style='color:#888;'>— अगर आप हाथ को किसी चीज़ पर "
+            "<span style='color:#888;'>- अगर आप हाथ को किसी चीज़ पर "
             "रोककर रखें, तो AirPoint अपने-आप क्लिक कर देगा।</span>"
         ),
         "autostart_label": "कंप्यूटर चालू होने पर AirPoint शुरू करें",
@@ -490,15 +496,15 @@ STRINGS = {
         "panel_pinch_drag": "खींचने के लिए चुटकी पकड़े रखें...",
         "panel_auto_clicked": "अपने-आप क्लिक हुआ!",
         "panel_look_screen": "शुरू करने के लिए स्क्रीन देखें",
-        "panel_ready": "तैयार — हाथ हिलाएँ",
-        "panel_gaze_on": "  न देखने पर रुकें  —  चालू\n  स्क्रीन से नज़र हटाने पर AirPoint रुकेगा",
-        "panel_gaze_off": "  न देखने पर रुकें  —  बंद\n  चालू करने के लिए यहाँ दबाएँ",
-        "panel_dwell_on": "  रुकने पर अपने-आप क्लिक  —  चालू\n  एक जगह रुकने पर क्लिक होगा",
-        "panel_dwell_off": "  रुकने पर अपने-आप क्लिक  —  बंद\n  चालू करने के लिए यहाँ दबाएँ",
+        "panel_ready": "तैयार - हाथ हिलाएँ",
+        "panel_gaze_on": "  न देखने पर रुकें  -  चालू\n  स्क्रीन से नज़र हटाने पर AirPoint रुकेगा",
+        "panel_gaze_off": "  न देखने पर रुकें  -  बंद\n  चालू करने के लिए यहाँ दबाएँ",
+        "panel_dwell_on": "  रुकने पर अपने-आप क्लिक  -  चालू\n  एक जगह रुकने पर क्लिक होगा",
+        "panel_dwell_off": "  रुकने पर अपने-आप क्लिक  -  बंद\n  चालू करने के लिए यहाँ दबाएँ",
         "panel_redo": "फिर से सेटअप करें",
         "panel_stop": "AirPoint बंद करें",
         # Crash
-        "crash_title": "AirPoint — कुछ गड़बड़ हो गई",
+        "crash_title": "AirPoint - कुछ गड़बड़ हो गई",
         "crash_msg": "AirPoint में कोई समस्या आई और इसे बंद करना पड़ा।\n\nआपकी प्रोफ़ाइल और सेटिंग्स सुरक्षित हैं।",
     },
     "ml": {
@@ -522,7 +528,7 @@ STRINGS = {
         "welcome_sub": "കൈയും ക്യാമറയും കൊണ്ട് മാത്രം\nനിങ്ങളുടെ കമ്പ്യൂട്ടർ നിയന്ത്രിക്കാം.",
         "how_title": "ഇത് എങ്ങനെ പ്രവർത്തിക്കുന്നു",
         "feat_move_title": "കഴ്സർ നീക്കുക",
-        "feat_move_desc": "ക്യാമറയ്ക്ക് മുന്നിൽ കൈ തുറന്നു പിടിക്കൂ.\nകൈ ചലിപ്പിക്കൂ — കഴ്സർ പിന്തുടരും.",
+        "feat_move_desc": "ക്യാമറയ്ക്ക് മുന്നിൽ കൈ തുറന്നു പിടിക്കൂ.\nകൈ ചലിപ്പിക്കൂ - കഴ്സർ പിന്തുടരും.",
         "feat_click_title": "ക്ലിക്ക്",
         "feat_click_desc": "തള്ളവിരലും അടുത്ത വിരലും\nചേർത്ത് നുള്ളൂ. വായുവിൽ ബട്ടൺ അമർത്തുംപോലെ.",
         "feat_right_title": "റൈറ്റ്-ക്ലിക്ക്",
@@ -532,25 +538,25 @@ STRINGS = {
         "setup_note": "നിങ്ങളുടെ കൈ ചലനം പഠിക്കാൻ AirPoint-ന്\nആദ്യം 30 സെക്കൻഡ് സജ്ജീകരണം വേണം.",
         "lets_go": "തുടങ്ങാം!",
         "skip_setup": "സജ്ജീകരണം ഒഴിവാക്കൂ",
-        "cal_step1_title": "ഘട്ടം 1 / 4 — കഴ്സർ സ്ക്രീൻ മുഴുവൻ എത്താൻ\nനിങ്ങൾ എത്രദൂരം എത്തുമെന്ന് അറിയണം.",
-        "cal_step2_title": "ഘട്ടം 2 / 4 — കുലുക്കം കുറയ്ക്കാൻ നിങ്ങളുടെ കൈ\nഎത്ര സ്ഥിരമാണെന്ന് പരിശോധിക്കുന്നു.",
-        "cal_step3_title": "ഘട്ടം 3 / 4 — ഇങ്ങനെ ക്ലിക്ക് ചെയ്യാം\nനുള്ളൽ വായുവിൽ ബട്ടൺ അമർത്തുംപോലെ.",
-        "cal_step4_title": "ഘട്ടം 4 / 4 — ഇങ്ങനെ റൈറ്റ്-ക്ലിക്ക് ചെയ്യാം\nമുഷ്ടി ചുരുട്ടിയാൽ മെനു തുറക്കും.",
+        "cal_step1_title": "ഘട്ടം 1 / 4 - കഴ്സർ സ്ക്രീൻ മുഴുവൻ എത്താൻ\nനിങ്ങൾ എത്രദൂരം എത്തുമെന്ന് അറിയണം.",
+        "cal_step2_title": "ഘട്ടം 2 / 4 - കുലുക്കം കുറയ്ക്കാൻ നിങ്ങളുടെ കൈ\nഎത്ര സ്ഥിരമാണെന്ന് പരിശോധിക്കുന്നു.",
+        "cal_step3_title": "ഘട്ടം 3 / 4 - ഇങ്ങനെ ക്ലിക്ക് ചെയ്യാം\nനുള്ളൽ വായുവിൽ ബട്ടൺ അമർത്തുംപോലെ.",
+        "cal_step4_title": "ഘട്ടം 4 / 4 - ഇങ്ങനെ റൈറ്റ്-ക്ലിക്ക് ചെയ്യാം\nമുഷ്ടി ചുരുട്ടിയാൽ മെനു തുറക്കും.",
         "cal_move_left": "കൈ ഇടത്തേക്ക് നീക്കൂ",
         "cal_move_right": "ഇനി കൈ വലത്തേക്ക് നീക്കൂ",
         "cal_move_up": "കൈ മുകളിലേക്ക് നീക്കൂ",
         "cal_move_down": "കൈ താഴേക്ക് നീക്കൂ",
         "cal_hint_dir": "സുഖമായി {dir} ഭാഗത്തേക്ക് കൈ എത്തുമ്പോൾ സ്പെയ്സ്ബാർ അമർത്തൂ",
-        "cal_hint_steady": "കാത്തിരിക്കൂ — ക്യാമറ നിങ്ങളുടെ കൈ നോക്കുന്നു",
+        "cal_hint_steady": "കാത്തിരിക്കൂ - ക്യാമറ നിങ്ങളുടെ കൈ നോക്കുന്നു",
         "cal_steady_inst": "കൈ അനക്കാതെ ശാന്തമായി പിടിക്കൂ",
-        "cal_pinch_inst": "തള്ളവിരലും അടുത്ത വിരലും ചേർത്ത് നുള്ളൂ — അങ്ങനെ പിടിച്ചുനിർത്തൂ",
-        "cal_fist_inst": "മുഷ്ടി ചുരുട്ടൂ — എല്ലാ വിരലുകളും അടച്ച് പിടിച്ചുനിർത്തൂ",
+        "cal_pinch_inst": "തള്ളവിരലും അടുത്ത വിരലും ചേർത്ത് നുള്ളൂ - അങ്ങനെ പിടിച്ചുനിർത്തൂ",
+        "cal_fist_inst": "മുഷ്ടി ചുരുട്ടൂ - എല്ലാ വിരലുകളും അടച്ച് പിടിച്ചുനിർത്തൂ",
         "cal_hint_gesture": "ആംഗ്യം പിടിച്ചുകൊണ്ട് റെക്കോർഡ് ചെയ്യാൻ സ്പെയ്സ്ബാർ അമർത്തൂ  (ഒഴിവാക്കാൻ N)",
         "cal_hold_still": "അനക്കാതെ പിടിക്കൂ...",
-        "cal_hand_lost": "കൈ കണ്ടില്ല — വീണ്ടും ശ്രമിക്കൂ",
+        "cal_hand_lost": "കൈ കണ്ടില്ല - വീണ്ടും ശ്രമിക്കൂ",
         "cal_show_hand": "തുടങ്ങാൻ കൈ കാണിക്കൂ",
-        "cal_recording": "റെക്കോർഡ് ചെയ്യുന്നു — ബാർ നിറയുംവരെ ആംഗ്യം പിടിക്കൂ",
-        "cal_gesture_retry": "കിട്ടിയില്ല — ആംഗ്യം കാണിച്ച് വീണ്ടും സ്പെയ്സ്ബാർ അമർത്തൂ",
+        "cal_recording": "റെക്കോർഡ് ചെയ്യുന്നു - ബാർ നിറയുംവരെ ആംഗ്യം പിടിക്കൂ",
+        "cal_gesture_retry": "കിട്ടിയില്ല - ആംഗ്യം കാണിച്ച് വീണ്ടും സ്പെയ്സ്ബാർ അമർത്തൂ",
         "done_title": "എല്ലാം തയ്യാർ!",
         "done_subtitle": "AirPoint തയ്യാർ. ഒരു ചെറിയ ഓർമ്മപ്പെടുത്തൽ:",
         "done_gesture_open": "തുറന്ന കൈ",
@@ -562,8 +568,8 @@ STRINGS = {
         "done_action_right": "റൈറ്റ്-ക്ലിക്ക്",
         "done_action_scroll": "സ്ക്രോൾ",
         "done_extras_title": "ഇവയും പിന്നീട് ഓൺ ചെയ്യാം:",
-        "done_extras_gaze": "<b style='color:#ccc;'>നോക്കാത്തപ്പോൾ താൽക്കാലികമായി നിർത്തുക</b> <span style='color:#888;'>— സ്ക്രീനിൽ നിന്ന് നോട്ടം മാറ്റിയാൽ AirPoint നിർത്തും, അബദ്ധത്തിൽ കഴ്സർ നീങ്ങില്ല.</span>",
-        "done_extras_dwell": "<b style='color:#ccc;'>ഓട്ടോ-ക്ലിക്ക്</b> <span style='color:#888;'>— ഒരു സാധനത്തിന് മുകളിൽ കൈ അനക്കാതെ നിർത്തിയാൽ AirPoint തനിയെ ക്ലിക്ക് ചെയ്യും.</span>",
+        "done_extras_gaze": "<b style='color:#ccc;'>നോക്കാത്തപ്പോൾ താൽക്കാലികമായി നിർത്തുക</b> <span style='color:#888;'>- സ്ക്രീനിൽ നിന്ന് നോട്ടം മാറ്റിയാൽ AirPoint നിർത്തും, അബദ്ധത്തിൽ കഴ്സർ നീങ്ങില്ല.</span>",
+        "done_extras_dwell": "<b style='color:#ccc;'>ഓട്ടോ-ക്ലിക്ക്</b> <span style='color:#888;'>- ഒരു സാധനത്തിന് മുകളിൽ കൈ അനക്കാതെ നിർത്തിയാൽ AirPoint തനിയെ ക്ലിക്ക് ചെയ്യും.</span>",
         "autostart_label": "കമ്പ്യൂട്ടർ ഓണാകുമ്പോൾ AirPoint തുടങ്ങുക",
         "start_airpoint": "AirPoint തുടങ്ങൂ",
         "panel_hi": "ഹായ്, {name}",
@@ -577,14 +583,14 @@ STRINGS = {
         "panel_pinch_drag": "വലിച്ചിടാൻ നുള്ളിപ്പിടിക്കൂ...",
         "panel_auto_clicked": "തനിയെ ക്ലിക്ക് ചെയ്തു!",
         "panel_look_screen": "തുടങ്ങാൻ സ്ക്രീനിലേക്ക് നോക്കൂ",
-        "panel_ready": "തയ്യാർ — കൈ നീക്കൂ",
-        "panel_gaze_on": "  നോക്കാത്തപ്പോൾ നിർത്തുക  —  ഓൺ\n  സ്ക്രീനിൽ നിന്ന് നോട്ടം മാറ്റിയാൽ AirPoint നിർത്തും",
-        "panel_gaze_off": "  നോക്കാത്തപ്പോൾ നിർത്തുക  —  ഓഫ്\n  ഓൺ ചെയ്യാൻ ഇവിടെ ടാപ്പ് ചെയ്യൂ",
-        "panel_dwell_on": "  അനക്കാതെ നിർത്തുമ്പോൾ ഓട്ടോ-ക്ലിക്ക്  —  ഓൺ\n  ഒരിടത്ത് നിന്നാൽ തനിയെ ക്ലിക്ക് ചെയ്യും",
-        "panel_dwell_off": "  അനക്കാതെ നിർത്തുമ്പോൾ ഓട്ടോ-ക്ലിക്ക്  —  ഓഫ്\n  ഓൺ ചെയ്യാൻ ഇവിടെ ടാപ്പ് ചെയ്യൂ",
+        "panel_ready": "തയ്യാർ - കൈ നീക്കൂ",
+        "panel_gaze_on": "  നോക്കാത്തപ്പോൾ നിർത്തുക  -  ഓൺ\n  സ്ക്രീനിൽ നിന്ന് നോട്ടം മാറ്റിയാൽ AirPoint നിർത്തും",
+        "panel_gaze_off": "  നോക്കാത്തപ്പോൾ നിർത്തുക  -  ഓഫ്\n  ഓൺ ചെയ്യാൻ ഇവിടെ ടാപ്പ് ചെയ്യൂ",
+        "panel_dwell_on": "  അനക്കാതെ നിർത്തുമ്പോൾ ഓട്ടോ-ക്ലിക്ക്  -  ഓൺ\n  ഒരിടത്ത് നിന്നാൽ തനിയെ ക്ലിക്ക് ചെയ്യും",
+        "panel_dwell_off": "  അനക്കാതെ നിർത്തുമ്പോൾ ഓട്ടോ-ക്ലിക്ക്  -  ഓഫ്\n  ഓൺ ചെയ്യാൻ ഇവിടെ ടാപ്പ് ചെയ്യൂ",
         "panel_redo": "സജ്ജീകരണം വീണ്ടും ചെയ്യൂ",
         "panel_stop": "AirPoint നിർത്തൂ",
-        "crash_title": "AirPoint — എന്തോ പിശക് സംഭവിച്ചു",
+        "crash_title": "AirPoint - എന്തോ പിശക് സംഭവിച്ചു",
         "crash_msg": "AirPoint-ന് അപ്രതീക്ഷിത പിശക് സംഭവിച്ചു, അടയ്ക്കേണ്ടതുണ്ട്.\n\nനിങ്ങളുടെ പ്രൊഫൈലുകളും ക്രമീകരണങ്ങളും സുരക്ഷിതമാണ്.",
     },
     "ta": {
@@ -618,25 +624,25 @@ STRINGS = {
         "setup_note": "முதலில், உங்கள் கை அசைவை AirPoint அறிய\nஒரு விரைவான 30-வினாடி அமைப்பு தேவை.",
         "lets_go": "தொடங்குவோம்!",
         "skip_setup": "அமைப்பைத் தவிர்",
-        "cal_step1_title": "படி 1/4 — சுட்டி உங்கள் முழு திரையையும் சேர\nநீங்கள் எவ்வளவு தூரம் எட்டுவீர்கள் என அறிய வேண்டும்.",
-        "cal_step2_title": "படி 2/4 — அசைவைக் குறைக்க உங்கள் கை எவ்வளவு\nஸ்திரமாக உள்ளது என சரிபார்க்கிறோம்.",
-        "cal_step3_title": "படி 3/4 — இப்படித்தான் கிளிக் செய்வீர்கள்\nகிள்ளுவது காற்றில் பட்டனை அழுத்துவது போல.",
-        "cal_step4_title": "படி 4/4 — இப்படித்தான் வலது கிளிக் செய்வீர்கள்\nமுட்டி பிடிப்பது மெனுக்களைத் திறக்கும்.",
+        "cal_step1_title": "படி 1/4 - சுட்டி உங்கள் முழு திரையையும் சேர\nநீங்கள் எவ்வளவு தூரம் எட்டுவீர்கள் என அறிய வேண்டும்.",
+        "cal_step2_title": "படி 2/4 - அசைவைக் குறைக்க உங்கள் கை எவ்வளவு\nஸ்திரமாக உள்ளது என சரிபார்க்கிறோம்.",
+        "cal_step3_title": "படி 3/4 - இப்படித்தான் கிளிக் செய்வீர்கள்\nகிள்ளுவது காற்றில் பட்டனை அழுத்துவது போல.",
+        "cal_step4_title": "படி 4/4 - இப்படித்தான் வலது கிளிக் செய்வீர்கள்\nமுட்டி பிடிப்பது மெனுக்களைத் திறக்கும்.",
         "cal_move_left": "உங்கள் கையை இடதுபுறம் நகர்த்தவும்",
         "cal_move_right": "இப்போது கையை வலதுபுறம் நகர்த்தவும்",
         "cal_move_up": "உங்கள் கையை மேலே நகர்த்தவும்",
         "cal_move_down": "உங்கள் கையை கீழே நகர்த்தவும்",
         "cal_hint_dir": "கை வசதியாக எட்டும் {dir} எல்லைக்கு வந்ததும் ஸ்பேஸ்பாரை அழுத்தவும்",
-        "cal_hint_steady": "காத்திருங்கள் — கேமரா உங்கள் கையைப் பார்க்கிறது",
+        "cal_hint_steady": "காத்திருங்கள் - கேமரா உங்கள் கையைப் பார்க்கிறது",
         "cal_steady_inst": "கையை அசைக்காமல் வைத்து ஓய்வாக இருங்கள்",
         "cal_pinch_inst": "கட்டைவிரலையும் அதன் அருகிலுள்ள விரலையும் இணைத்து அப்படியே வைத்திருங்கள்",
-        "cal_fist_inst": "முட்டி பிடிக்கவும் — அனைத்து விரல்களையும் மூடி அப்படியே வைத்திருங்கள்",
+        "cal_fist_inst": "முட்டி பிடிக்கவும் - அனைத்து விரல்களையும் மூடி அப்படியே வைத்திருங்கள்",
         "cal_hint_gesture": "சைகையை வைத்தபடி பதிவுசெய்ய ஸ்பேஸ்பாரை அழுத்தவும்  (தவிர்க்க N)",
         "cal_hold_still": "அசைக்காமல் வைக்கவும்...",
-        "cal_hand_lost": "கை தெரியவில்லை — மீண்டும் முயற்சிக்கவும்",
+        "cal_hand_lost": "கை தெரியவில்லை - மீண்டும் முயற்சிக்கவும்",
         "cal_show_hand": "தொடங்க உங்கள் கையைக் காட்டவும்",
-        "cal_recording": "பதிவாகிறது — பட்டை நிரம்பும் வரை சைகையை வைத்திருங்கள்",
-        "cal_gesture_retry": "பிடிபடவில்லை — சைகையைச் செய்து மீண்டும் ஸ்பேஸ்பாரை அழுத்தவும்",
+        "cal_recording": "பதிவாகிறது - பட்டை நிரம்பும் வரை சைகையை வைத்திருங்கள்",
+        "cal_gesture_retry": "பிடிபடவில்லை - சைகையைச் செய்து மீண்டும் ஸ்பேஸ்பாரை அழுத்தவும்",
         "done_title": "எல்லாம் தயார்!",
         "done_subtitle": "AirPoint தயார். ஒரு விரைவான நினைவூட்டல்:",
         "done_gesture_open": "திறந்த கை",
@@ -648,8 +654,8 @@ STRINGS = {
         "done_action_right": "வலது கிளிக்",
         "done_action_scroll": "ஸ்க்ரோல்",
         "done_extras_title": "இவற்றையும் பிறகு இயக்கலாம்:",
-        "done_extras_gaze": "<b style='color:#ccc;'>பார்க்காதபோது இடைநிறுத்து</b> <span style='color:#888;'>— திரையை விட்டு வேறு பக்கம் பார்த்தால் AirPoint இடைநிறுத்தும், எனவே தற்செயலாக சுட்டி நகராது.</span>",
-        "done_extras_dwell": "<b style='color:#ccc;'>தானியங்கி கிளிக்</b> <span style='color:#888;'>— ஒரு பொருளின் மேல் கையை சிறிது நேரம் அசைக்காமல் வைத்தால், AirPoint தானாகவே கிளிக் செய்யும்.</span>",
+        "done_extras_gaze": "<b style='color:#ccc;'>பார்க்காதபோது இடைநிறுத்து</b> <span style='color:#888;'>- திரையை விட்டு வேறு பக்கம் பார்த்தால் AirPoint இடைநிறுத்தும், எனவே தற்செயலாக சுட்டி நகராது.</span>",
+        "done_extras_dwell": "<b style='color:#ccc;'>தானியங்கி கிளிக்</b> <span style='color:#888;'>- ஒரு பொருளின் மேல் கையை சிறிது நேரம் அசைக்காமல் வைத்தால், AirPoint தானாகவே கிளிக் செய்யும்.</span>",
         "autostart_label": "கணினி இயங்கும்போது AirPoint-ஐ தொடங்கு",
         "start_airpoint": "AirPoint-ஐ தொடங்கு",
         "panel_hi": "வணக்கம், {name}",
@@ -663,19 +669,19 @@ STRINGS = {
         "panel_pinch_drag": "இழுக்க கிள்ளியபடி வைத்திருங்கள்...",
         "panel_auto_clicked": "தானாக கிளிக் ஆனது!",
         "panel_look_screen": "தொடங்க திரையைப் பாருங்கள்",
-        "panel_ready": "தயார் — உங்கள் கையை நகர்த்தவும்",
-        "panel_gaze_on": "  பார்க்காதபோது இடைநிறுத்து  —  இயக்கப்பட்டது\n  திரையை விட்டு பார்த்தால் AirPoint இடைநிறுத்தும்",
-        "panel_gaze_off": "  பார்க்காதபோது இடைநிறுத்து  —  நிறுத்தப்பட்டது\n  இதை இயக்க இங்கே தட்டவும்",
-        "panel_dwell_on": "  அசைக்காமல் வைத்தால் தானியங்கி கிளிக்  —  இயக்கப்பட்டது\n  ஒரே இடத்தில் நின்றால் உங்களுக்காக கிளிக் செய்யும்",
-        "panel_dwell_off": "  அசைக்காமல் வைத்தால் தானியங்கி கிளிக்  —  நிறுத்தப்பட்டது\n  இதை இயக்க இங்கே தட்டவும்",
+        "panel_ready": "தயார் - உங்கள் கையை நகர்த்தவும்",
+        "panel_gaze_on": "  பார்க்காதபோது இடைநிறுத்து  -  இயக்கப்பட்டது\n  திரையை விட்டு பார்த்தால் AirPoint இடைநிறுத்தும்",
+        "panel_gaze_off": "  பார்க்காதபோது இடைநிறுத்து  -  நிறுத்தப்பட்டது\n  இதை இயக்க இங்கே தட்டவும்",
+        "panel_dwell_on": "  அசைக்காமல் வைத்தால் தானியங்கி கிளிக்  -  இயக்கப்பட்டது\n  ஒரே இடத்தில் நின்றால் உங்களுக்காக கிளிக் செய்யும்",
+        "panel_dwell_off": "  அசைக்காமல் வைத்தால் தானியங்கி கிளிக்  -  நிறுத்தப்பட்டது\n  இதை இயக்க இங்கே தட்டவும்",
         "panel_redo": "அமைப்பை மீண்டும் செய்",
         "panel_stop": "AirPoint-ஐ நிறுத்து",
-        "crash_title": "AirPoint — ஏதோ தவறு நடந்தது",
+        "crash_title": "AirPoint - ஏதோ தவறு நடந்தது",
         "crash_msg": "AirPoint எதிர்பாராத பிழையை சந்தித்ததால் மூட வேண்டும்.\n\nஉங்கள் சுயவிவரங்களும் அமைப்புகளும் பாதுகாப்பாக உள்ளன.",
     },
 }
 
-# Current language — set during wizard, defaults to English
+# Current language - set during wizard, defaults to English
 _current_lang = "en"
 
 def S(key, **kwargs):
@@ -701,7 +707,7 @@ def set_language(lang):
 # from the app logo (a vivid blue with a cyan glow). Styling is centralized:
 # `T` holds the resolved palette, `_font()` returns the platform's system UI
 # font, and BASE_QSS is the global stylesheet applied to the QApplication.
-# Onboarding is the only screen-heavy surface, so this is kept lightweight —
+# Onboarding is the only screen-heavy surface, so this is kept lightweight -
 # one palette object, one stylesheet, native window chrome.
 # ---------------------------------------------------------------------------
 from types import SimpleNamespace
@@ -765,7 +771,7 @@ def _detect_dark():
 IS_DARK = _detect_dark()
 T = SimpleNamespace(**(_DARK if IS_DARK else _LIGHT))
 
-# Platform system-UI font stacks — makes the app feel native on each OS while
+# Platform system-UI font stacks - makes the app feel native on each OS while
 # letting Qt fall back automatically for Indic scripts (Hindi/Malayalam/Tamil).
 # On macOS, ".AppleSystemUIFont" resolves to San Francisco (the real system
 # font); Helvetica Neue is the always-present native fallback. The family is
@@ -913,7 +919,7 @@ def apply_app_theme(app):
 #
 # These give the panels a modern macOS feel (the same on Windows): a painted
 # toggle switch, inset-grouped rounded "cards", small section headers, and
-# label/control rows — the building blocks of macOS System Settings.
+# label/control rows - the building blocks of macOS System Settings.
 # ---------------------------------------------------------------------------
 
 class Switch(QAbstractButton):
@@ -943,7 +949,7 @@ class Switch(QAbstractButton):
 
 
 class NoScrollSlider(QSlider):
-    """A slider that ignores the mouse wheel — it only changes by click+drag,
+    """A slider that ignores the mouse wheel - it only changes by click+drag,
     so scrolling the page over a slider never nudges its value."""
 
     def wheelEvent(self, event):
@@ -1011,10 +1017,31 @@ def make_row(title, control=None, height=46):
 
 def _split_toggle(s):
     """Pull a concise title out of the legacy two-line toggle strings, e.g.
-    '  Pause when not looking  —  ON\\n  ...'  ->  'Pause when not looking'.
+    '  Pause when not looking  -  ON\\n  ...'  ->  'Pause when not looking'.
+    Splits on the ' - ' separator (spaces on both sides) so titles that contain
+    their own hyphen, e.g. 'Auto-click when you hold still', stay intact.
     Reuses the existing translations so no new i18n keys are needed."""
     first = s.partition("\n")[0]
-    return first.split("—")[0].strip()
+    idx = first.find(" - ")
+    return (first[:idx] if idx != -1 else first).strip()
+
+
+def open_practice_games():
+    """Open the bundled kid practice games (game/index.html) in the default
+    browser. Works both frozen (game/ is bundled via AirPoint.spec) and from
+    source. No-op with a log line if the folder can't be found."""
+    import webbrowser
+    from pathlib import Path
+    base = getattr(sys, "_MEIPASS", None) or os.path.dirname(os.path.abspath(__file__))
+    for path in (os.path.join(base, "game", "index.html"),
+                 os.path.join(APP_DIR, "game", "index.html")):
+        if os.path.exists(path):
+            try:
+                webbrowser.open(Path(path).as_uri())
+            except Exception as e:
+                print(f"Could not open practice games: {e}")
+            return
+    print(f"Practice games not found near {base}")
 
 
 class CameraWidget(QLabel):
@@ -1067,7 +1094,7 @@ class SetupWizard(QWidget):
 
         # Window setup
         self.setWindowTitle("AirPoint Setup")
-        self.setFixedSize(720, 540)
+        self.setFixedSize(760, 660)
         self.setStyleSheet(BASE_QSS)
 
         # Stacked widget for pages
@@ -1094,15 +1121,15 @@ class SetupWizard(QWidget):
 
         # Show correct starting page
         if self.controller.profile_name and self.controller.calibration is None:
-            # Profile name given via CLI but not found — go straight to welcome
+            # Profile name given via CLI but not found - go straight to welcome
             self.profile_name = self.controller.profile_name
             self.welcome_title.setText(S("welcome_hi", name=self.profile_name))
             self.stacked.setCurrentIndex(3)
         elif self.controller.list_profiles():
-            # Returning user — skip language, go to profile selector
+            # Returning user - skip language, go to profile selector
             self.stacked.setCurrentIndex(1)
         else:
-            # First-time user — start with language choice
+            # First-time user - start with language choice
             self.stacked.setCurrentIndex(0)
 
     # ---- Page Builders ----
@@ -1118,7 +1145,7 @@ class SetupWizard(QWidget):
         title = QLabel("Choose your language")
         title.setFont(_font(24, QFont.Bold))
         title.setAlignment(Qt.AlignCenter)
-        title.setStyleSheet("color: white;")
+        title.setStyleSheet(f"color: {T.text};")
         vbox.addWidget(title)
 
         sub = QLabel("अपनी भाषा चुनें")
@@ -1231,7 +1258,7 @@ class SetupWizard(QWidget):
         self._prof_title = QLabel(S("profile_title"))
         self._prof_title.setFont(_font(24, QFont.Bold))
         self._prof_title.setAlignment(Qt.AlignCenter)
-        self._prof_title.setStyleSheet("color: white;")
+        self._prof_title.setStyleSheet(f"color: {T.text};")
         vbox.addWidget(self._prof_title)
 
         self._prof_sub = QLabel(S("profile_subtitle"))
@@ -1275,7 +1302,7 @@ class SetupWizard(QWidget):
         self._name_title = QLabel(S("name_title"))
         self._name_title.setFont(_font(22, QFont.Bold))
         self._name_title.setAlignment(Qt.AlignCenter)
-        self._name_title.setStyleSheet("color: white;")
+        self._name_title.setStyleSheet(f"color: {T.text};")
         vbox.addWidget(self._name_title)
 
         self._name_sub = QLabel(S("name_subtitle"))
@@ -1310,33 +1337,47 @@ class SetupWizard(QWidget):
 
     def _build_welcome_page(self):
         page = QWidget()
-        vbox = QVBoxLayout(page)
-        vbox.setContentsMargins(40, 24, 40, 20)
-        vbox.setSpacing(6)
+        outer = QVBoxLayout(page)
+        outer.setContentsMargins(0, 0, 0, 0)
 
+        # Scroll-safe so it never clips on smaller displays or long translations.
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        outer.addWidget(scroll)
+
+        content = QWidget()
+        scroll.setWidget(content)
+        v = QVBoxLayout(content)
+        v.setContentsMargins(80, 38, 80, 28)
+        v.setSpacing(0)
+
+        # Title + subtitle (theme colors so it reads in light AND dark mode).
         self.welcome_title = QLabel(S("welcome_default"))
-        self.welcome_title.setFont(_font(24, QFont.Bold))
+        self.welcome_title.setFont(_font(26, QFont.Bold))
         self.welcome_title.setAlignment(Qt.AlignCenter)
-        self.welcome_title.setStyleSheet("color: white;")
-        vbox.addWidget(self.welcome_title)
+        self.welcome_title.setStyleSheet(f"color: {T.text};")
+        v.addWidget(self.welcome_title)
 
+        v.addSpacing(8)
         self._welcome_sub = QLabel(S("welcome_sub"))
-        self._welcome_sub.setFont(_font(12))
+        self._welcome_sub.setFont(_font(13))
         self._welcome_sub.setAlignment(Qt.AlignCenter)
         self._welcome_sub.setStyleSheet(f"color: {T.text_dim};")
         self._welcome_sub.setWordWrap(True)
-        vbox.addWidget(self._welcome_sub)
+        v.addWidget(self._welcome_sub)
 
-        vbox.addSpacing(10)
-
+        # "How it works" -> a grouped card of clean stacked rows.
+        v.addSpacing(26)
         self._how_title = QLabel(S("how_title"))
-        self._how_title.setFont(_font(14, QFont.Bold))
-        self._how_title.setStyleSheet(f"color: {T.accent};")
-        vbox.addWidget(self._how_title)
+        self._how_title.setFont(_font(11, QFont.DemiBold))
+        self._how_title.setStyleSheet(f"color: {T.text_dim}; padding-left: 4px;")
+        v.addWidget(self._how_title)
+        v.addSpacing(8)
 
-        vbox.addSpacing(4)
-
-        # Feature rows — store labels for translation refresh
+        card = Card()
         self._feat_labels = []
         feat_keys = [
             ("feat_move_title", "feat_move_desc"),
@@ -1345,61 +1386,79 @@ class SetupWizard(QWidget):
             ("feat_scroll_title", "feat_scroll_desc"),
         ]
         for title_key, desc_key in feat_keys:
-            row = QHBoxLayout()
-            row.setSpacing(10)
-            row.setContentsMargins(0, 0, 0, 0)
+            rw = QWidget()
+            rv = QVBoxLayout(rw)
+            rv.setContentsMargins(16, 12, 16, 12)
+            rv.setSpacing(3)
             t = QLabel(f"<b>{S(title_key)}</b>")
-            t.setFont(_font(11))
-            t.setStyleSheet(f"color: {T.text2};")
-            t.setFixedWidth(120)
-            t.setAlignment(Qt.AlignTop | Qt.AlignLeft)
-            row.addWidget(t)
+            t.setFont(_font(13))
+            t.setStyleSheet(f"color: {T.text};")
+            rv.addWidget(t)
             d = QLabel(S(desc_key))
-            d.setFont(_font(10))
+            d.setFont(_font(12))
             d.setStyleSheet(f"color: {T.text_dim};")
             d.setWordWrap(True)
-            row.addWidget(d, 1)
+            rv.addWidget(d)
+            card.add_row(rw)
             self._feat_labels.append((title_key, t, desc_key, d))
-            vbox.addLayout(row)
-            vbox.addSpacing(2)
+        v.addWidget(card)
 
-        vbox.addSpacing(6)
-
+        v.addSpacing(18)
         self._setup_note = QLabel(S("setup_note"))
-        self._setup_note.setFont(_font(11))
+        self._setup_note.setFont(_font(12))
         self._setup_note.setAlignment(Qt.AlignCenter)
         self._setup_note.setStyleSheet(f"color: {T.text_dim};")
         self._setup_note.setWordWrap(True)
-        vbox.addWidget(self._setup_note)
+        v.addWidget(self._setup_note)
 
-        vbox.addSpacing(10)
-
-        btn_row = QHBoxLayout()
-        btn_row.setSpacing(12)
+        # Primary actions.
+        v.addSpacing(22)
+        prow = QHBoxLayout()
+        prow.setSpacing(12)
         self._begin_btn = QPushButton(S("lets_go"))
+        self._begin_btn.setCursor(Qt.PointingHandCursor)
+        self._begin_btn.setFixedHeight(44)
+        self._begin_btn.setMinimumWidth(168)
         self._begin_btn.clicked.connect(self._start_calibration)
-        btn_row.addStretch()
-        btn_row.addWidget(self._begin_btn)
-
         self._skip_btn = QPushButton(S("skip_setup"))
         self._skip_btn.setObjectName("secondary")
+        self._skip_btn.setCursor(Qt.PointingHandCursor)
+        self._skip_btn.setFixedHeight(44)
         self._skip_btn.clicked.connect(lambda: self._finish("skipped"))
-        btn_row.addWidget(self._skip_btn)
-        btn_row.addStretch()
-        vbox.addLayout(btn_row)
+        prow.addStretch()
+        prow.addWidget(self._begin_btn)
+        prow.addWidget(self._skip_btn)
+        prow.addStretch()
+        v.addLayout(prow)
 
-        # Accessibility: skip pinch/fist calibration entirely and use Limited mode
-        # (cursor follows the hand in any pose; a quick finger flick clicks).
-        self._limited_btn = QPushButton("Can't pinch? Use Limited mode (no calibration)")
+        # Accessibility alternatives (skip pinch/fist calibration entirely).
+        # Limited mode = follow the hand in any pose + flick-click. Kids mode =
+        # move the hand, hold a fist to click, hover an edge to scroll.
+        v.addSpacing(18)
+        self._acc_label = QLabel("Prefer a simpler way to control it?")
+        self._acc_label.setFont(_font(11))
+        self._acc_label.setAlignment(Qt.AlignCenter)
+        self._acc_label.setStyleSheet(f"color: {T.text_dim};")
+        v.addWidget(self._acc_label)
+        v.addSpacing(8)
+        acc_row = QHBoxLayout()
+        acc_row.setSpacing(10)
+        self._limited_btn = QPushButton("Can't pinch? Limited mode")
         self._limited_btn.setObjectName("secondary")
         self._limited_btn.setCursor(Qt.PointingHandCursor)
+        self._limited_btn.setFixedHeight(40)
         self._limited_btn.clicked.connect(self._start_limited)
-        lim_row = QHBoxLayout()
-        lim_row.addStretch()
-        lim_row.addWidget(self._limited_btn)
-        lim_row.addStretch()
-        vbox.addSpacing(4)
-        vbox.addLayout(lim_row)
+        self._kids_btn = QPushButton("Young child? Kids mode")
+        self._kids_btn.setObjectName("secondary")
+        self._kids_btn.setCursor(Qt.PointingHandCursor)
+        self._kids_btn.setFixedHeight(40)
+        self._kids_btn.clicked.connect(self._start_kids)
+        acc_row.addStretch()
+        acc_row.addWidget(self._limited_btn)
+        acc_row.addWidget(self._kids_btn)
+        acc_row.addStretch()
+        v.addLayout(acc_row)
+        v.addStretch(1)
 
         return page
 
@@ -1605,10 +1664,11 @@ class SetupWizard(QWidget):
 
     def _start_limited(self):
         """Accessibility bypass: create an uncalibrated profile that runs in
-        Limited mode (move + flick-click, any hand pose) — no pinch/fist needed."""
+        Limited mode (move + flick-click, any hand pose) - no pinch/fist needed."""
         self.timer.stop()
         c = self.controller
         c.limited_mode = True
+        c.kids_mode = False
         c.calibration = None        # uncalibrated → relative cursor movement
         c.pinch_threshold = None
         c.fist_threshold = None
@@ -1619,7 +1679,34 @@ class SetupWizard(QWidget):
             c.save_profile()
         except Exception as e:
             print(f"Could not save Limited-mode profile: {e}")
+        # Make this the default so the app boots straight into Limited mode next time.
+        HandCenterGestureController.set_default_profile(self.profile_name)
         print(f"Limited mode set up for '{self.profile_name}' (no calibration).")
+        self._finish("completed")
+
+    def _start_kids(self):
+        """Accessibility bypass: create an uncalibrated profile that runs in Kids
+        mode (open hand = move, close = click, hover edge = scroll) - no pinch/fist."""
+        self.timer.stop()
+        c = self.controller
+        c.kids_mode = True
+        c.limited_mode = False
+        c.calibration = None        # uncalibrated → relative cursor movement
+        c.pinch_threshold = None
+        c.fist_threshold = None
+        if not c.profile_name:
+            c.profile_name = self.profile_name or "default"
+        self.profile_name = c.profile_name
+        try:
+            c.save_profile()
+        except Exception as e:
+            print(f"Could not save Kids-mode profile: {e}")
+        # Make this the default so the app boots straight into Kids mode next
+        # time - no wizard for the parent on every launch.
+        HandCenterGestureController.set_default_profile(self.profile_name)
+        print(f"Kids mode set up for '{self.profile_name}' (no calibration).")
+        # The games are opened by run() once tracking starts (covers both this
+        # first setup and every later auto-load of the Kids profile).
         self._finish("completed")
 
     def _update_cal_display(self):
@@ -1696,18 +1783,23 @@ class SetupWizard(QWidget):
             hand_center = None
             landmarks = None
             if hand_results.multi_hand_landmarks:
-                for hl in hand_results.multi_hand_landmarks:
-                    self.controller.mp_draw.draw_landmarks(
-                        frame, hl, self.controller.mp_hands.HAND_CONNECTIONS,
-                        self.controller.mp_draw.DrawingSpec(color=(80, 80, 80), thickness=1, circle_radius=1),
-                        self.controller.mp_draw.DrawingSpec(color=(60, 60, 60), thickness=1)
-                    )
-                    landmarks = self.controller.get_landmarks(hl)
-                    hand_center = self.controller.calculate_hand_center(landmarks)
-                    hx = int(hand_center[0] * frame_w)
-                    hy = int(hand_center[1] * frame_h)
-                    cv2.circle(frame, (hx, hy), 20, (0, 220, 200), 3)
-                    cv2.circle(frame, (hx, hy), 5, (0, 220, 200), -1)
+                # If more than one hand is visible (e.g. a helper's), calibrate on
+                # the most-centered one so a stray hand can't corrupt the capture.
+                def _centered(hl):
+                    ctr = self.controller.calculate_hand_center(self.controller.get_landmarks(hl))
+                    return (ctr[0] - 0.5) ** 2 + (ctr[1] - 0.5) ** 2
+                hl = min(hand_results.multi_hand_landmarks, key=_centered)
+                self.controller.mp_draw.draw_landmarks(
+                    frame, hl, self.controller.mp_hands.HAND_CONNECTIONS,
+                    self.controller.mp_draw.DrawingSpec(color=(80, 80, 80), thickness=1, circle_radius=1),
+                    self.controller.mp_draw.DrawingSpec(color=(60, 60, 60), thickness=1)
+                )
+                landmarks = self.controller.get_landmarks(hl)
+                hand_center = self.controller.calculate_hand_center(landmarks)
+                hx = int(hand_center[0] * frame_w)
+                hy = int(hand_center[1] * frame_h)
+                cv2.circle(frame, (hx, hy), 20, (0, 220, 200), 3)
+                cv2.circle(frame, (hx, hy), 5, (0, 220, 200), -1)
 
             # Draw recorded direction points
             for rec_label, rec_pos in self.recorded.items():
@@ -1869,7 +1961,7 @@ class SetupWizard(QWidget):
                     self._advance_from_gesture(gesture_name)
                 else:
                     # Hand wasn't visible during recording. Don't silently disable
-                    # the gesture — reset and let the user try again (or press N to skip).
+                    # the gesture - reset and let the user try again (or press N to skip).
                     print(f"  {gesture_name}: too few samples, retrying")
                     self.gesture_sampling = False
                     self.gesture_sample_start = None
@@ -1885,7 +1977,7 @@ class SetupWizard(QWidget):
             self.cal_step = 3
             self._update_cal_display()
         else:
-            # Fist done — finalize calibration
+            # Fist done - finalize calibration
             self._finish_calibration()
 
     def _finish_calibration(self):
@@ -2003,16 +2095,27 @@ class StatusPanel(QWidget):
         self.gaze_switch = Switch()
         self.dwell_switch = Switch()
         self.limited_switch = Switch()
+        self.kids_switch = Switch()
         card.add_row(make_row("Pause tracking", self.pause_switch))
         card.add_row(make_row(_split_toggle(S("panel_gaze_on")), self.gaze_switch))
         card.add_row(make_row(_split_toggle(S("panel_dwell_on")), self.dwell_switch))
-        card.add_row(make_row("Limited mode  —  move + click without opening your hand",
+        card.add_row(make_row("Limited mode  -  move + click without opening your hand",
                               self.limited_switch))
+        card.add_row(make_row("Kids mode  -  move your hand; hold a fist to click",
+                              self.kids_switch))
         root.addWidget(card)
         self.limited_switch.toggled.connect(self._on_limited_switch)
+        self.kids_switch.toggled.connect(self._on_kids_switch)
         self.pause_switch.toggled.connect(self._on_pause_switch)
         self.gaze_switch.toggled.connect(self._on_gaze_switch)
         self.dwell_switch.toggled.connect(self._on_dwell_switch)
+
+        # ---- Practice games (prominent: the main thing kids reach for) ----
+        self.games_btn = QPushButton("Practice games")
+        self.games_btn.setCursor(Qt.PointingHandCursor)   # primary accent style
+        self.games_btn.setFixedHeight(44)
+        self.games_btn.clicked.connect(lambda: open_practice_games())
+        root.addWidget(self.games_btn)
 
         # ---- Settings / Profiles ----
         tools_row = QHBoxLayout()
@@ -2051,7 +2154,7 @@ class StatusPanel(QWidget):
 
     def showEvent(self, event):
         # Size the window to its content once laid out (so wrapped row titles
-        # are measured at the real width) — no dead space, no clipping.
+        # are measured at the real width) - no dead space, no clipping.
         super().showEvent(event)
         if not getattr(self, "_height_fixed", False):
             self._height_fixed = True
@@ -2097,6 +2200,13 @@ class StatusPanel(QWidget):
             self.controller.toggle_limited_mode()
         self._update_status()
 
+    def _on_kids_switch(self, checked):
+        if self._syncing:
+            return
+        if checked != bool(getattr(self.controller, 'kids_mode', False)):
+            self.controller.toggle_kids_mode()
+        self._update_status()
+
     def _open_settings(self):
         self._open_control('settings')
 
@@ -2130,6 +2240,7 @@ class StatusPanel(QWidget):
         self.gaze_switch.setChecked(bool(c.gaze_detection_enabled))
         self.dwell_switch.setChecked(bool(c.dwell_click_enabled))
         self.limited_switch.setChecked(bool(getattr(c, 'limited_mode', False)))
+        self.kids_switch.setChecked(bool(getattr(c, 'kids_mode', False)))
         self._syncing = False
 
         # -- Status pill --
@@ -2152,6 +2263,7 @@ class StatusPanel(QWidget):
                 "scroll_active": S("panel_scrolling"),
                 "pinch_wait": S("panel_pinch_drag"),
                 "dwell_click": S("panel_auto_clicked"),
+                "kids_holding": "Hold to click…",
                 "safety_disabled": S("panel_look_screen"),
                 "idle": S("panel_ready"),
             }.get(gesture, S("panel_ready"))
@@ -2182,7 +2294,7 @@ class StatusPanel(QWidget):
         if cc is not None:
             cc.close()
         # Closing the panel by ANY means (incl. the OS X-button) must stop the
-        # tracking loop — otherwise the cursor keeps moving with no UI to stop it.
+        # tracking loop - otherwise the cursor keeps moving with no UI to stop it.
         cb = getattr(self, '_on_close_quit', None)
         if cb is not None:
             self._on_close_quit = None  # one-shot: on_quit calls panel.close() again
@@ -2320,11 +2432,13 @@ class SettingsPanel(QWidget):
         gcard.add_row(make_row("Fist does", self.fist_combo))
         v.addWidget(gcard)
 
-        # ---- Limited mode (accessibility) ----
-        v.addWidget(section_label("LIMITED MODE"))
+        # ---- Accessibility modes (moved to the TOP of Settings below) ----
+        _acc_hdr = section_label("ACCESSIBILITY MODES")
         lcard = Card()
+        self.kids_cb = Switch()
+        lcard.add_row(make_row("Kids mode  -  move your hand, hold a fist to click, hover edge to scroll", self.kids_cb))
         self.limited_cb = Switch()
-        lcard.add_row(make_row("Move + click without opening your hand", self.limited_cb))
+        lcard.add_row(make_row("Limited mode  -  move + flick-click without opening your hand", self.limited_cb))
         # Flick-click sensitivity slider (1-10; higher = a smaller finger flick clicks).
         lrow = QWidget()
         lrv = QVBoxLayout(lrow)
@@ -2332,7 +2446,7 @@ class SettingsPanel(QWidget):
         lrv.setSpacing(7)
         ltop = QHBoxLayout()
         ltop.setSpacing(8)
-        lcap = QLabel("Click sensitivity")
+        lcap = QLabel("Limited mode: click sensitivity")
         lcap.setFont(_font(13))
         lcap.setStyleSheet(f"color: {T.text};")
         self.flick_val = QLabel("")
@@ -2352,7 +2466,37 @@ class SettingsPanel(QWidget):
         self.flick_slider.valueChanged.connect(self._on_flick_sensitivity)
         lrv.addWidget(self.flick_slider)
         lcard.add_row(lrow)
-        v.addWidget(lcard)
+        # Kids hold-to-click time (0.5-4.0s, in 0.1s steps).
+        hrow = QWidget()
+        hrv = QVBoxLayout(hrow)
+        hrv.setContentsMargins(14, 10, 14, 10)
+        hrv.setSpacing(7)
+        htop = QHBoxLayout()
+        htop.setSpacing(8)
+        hcap = QLabel("Kids: hold time to click")
+        hcap.setFont(_font(13))
+        hcap.setStyleSheet(f"color: {T.text};")
+        self.hold_val = QLabel("")
+        self.hold_val.setFont(_font(12, QFont.DemiBold))
+        self.hold_val.setStyleSheet(f"color: {T.accent};")
+        self.hold_val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        htop.addWidget(hcap)
+        htop.addStretch(1)
+        htop.addWidget(self.hold_val)
+        hrv.addLayout(htop)
+        self.hold_slider = NoScrollSlider(Qt.Horizontal)
+        self.hold_slider.setMinimum(5)    # 0.5s (value/10)
+        self.hold_slider.setMaximum(40)   # 4.0s
+        self.hold_slider.setSingleStep(1)
+        self.hold_slider.setPageStep(1)
+        self.hold_slider.setCursor(Qt.PointingHandCursor)
+        self.hold_slider.valueChanged.connect(self._on_kids_hold)
+        hrv.addWidget(self.hold_slider)
+        lcard.add_row(hrow)
+        # Put accessibility (Kids/Limited + click time) FIRST in Settings.
+        v.insertWidget(0, lcard)
+        v.insertWidget(0, _acc_hdr)
+        self.kids_cb.toggled.connect(self._on_kids_toggle)
         self.limited_cb.toggled.connect(self._on_limited_toggle)
 
         v.addStretch(1)
@@ -2424,12 +2568,27 @@ class SettingsPanel(QWidget):
             return
         if bool(checked) != bool(getattr(self.controller, "limited_mode", False)):
             self.controller.toggle_limited_mode()
+        self._sync_from_controller()  # reflect mutual exclusivity (kids turned off)
+
+    def _on_kids_toggle(self, checked):
+        if self._loading:
+            return
+        if bool(checked) != bool(getattr(self.controller, "kids_mode", False)):
+            self.controller.toggle_kids_mode()
+        self._sync_from_controller()  # reflect mutual exclusivity (limited turned off)
 
     def _on_flick_sensitivity(self, raw):
         if self._loading:
             return
         self.controller.limited_click_sensitivity = int(raw)
         self.flick_val.setText(f"{int(raw)}/10")
+
+    def _on_kids_hold(self, raw):
+        if self._loading:
+            return
+        secs = int(raw) / 10.0
+        self.controller.kids_click_hold = secs
+        self.hold_val.setText(f"{secs:.1f}s")
 
     def _make_action_combo(self, gesture):
         combo = NoScrollComboBox()
@@ -2457,10 +2616,14 @@ class SettingsPanel(QWidget):
             val.setText(fmt(real))
         self.dwell_cb.setChecked(bool(self.controller.dwell_click_enabled))
         self.feedback_cb.setChecked(bool(getattr(self.controller, "click_feedback_enabled", True)))
+        self.kids_cb.setChecked(bool(getattr(self.controller, "kids_mode", False)))
         self.limited_cb.setChecked(bool(getattr(self.controller, "limited_mode", False)))
         _fs = int(getattr(self.controller, "limited_click_sensitivity", 6))
         self.flick_slider.setValue(_fs)
         self.flick_val.setText(f"{_fs}/10")
+        _hs = float(getattr(self.controller, "kids_click_hold", 1.5))
+        self.hold_slider.setValue(int(round(_hs * 10)))
+        self.hold_val.setText(f"{_hs:.1f}s")
         ga = self.controller.gesture_actions
         for gesture, combo, default in (("pinch", self.pinch_combo, "left_click"),
                                         ("fist", self.fist_combo, "right_click")):
@@ -2473,7 +2636,7 @@ class SettingsPanel(QWidget):
         active = self.controller.detect_preset()
         for key, b in self.preset_btns.items():
             b.setStyleSheet(self.PRESET_ON if key == active else self.PRESET_OFF)
-        self.custom_lbl.setText("Custom — your own tuning" if active == "custom" else "")
+        self.custom_lbl.setText("Custom - your own tuning" if active == "custom" else "")
 
     def _on_reset(self):
         c = self.controller
@@ -2486,6 +2649,7 @@ class SettingsPanel(QWidget):
         c.action_cooldown = th["action_cooldown"]
         c.dwell_click_duration = DEFAULT_CONFIG["dwell_click"]["duration"]
         c.limited_click_sensitivity = DEFAULT_CONFIG["limited_click_sensitivity"]
+        c.kids_click_hold = DEFAULT_CONFIG["kids_click_hold"]
         self._sync_from_controller()
 
     def _on_save(self):
@@ -2705,7 +2869,7 @@ class ControlCenter(QWidget):
 class ClickFeedbackOverlay(QWidget):
     """Transparent, click-through, always-on-top ring animation drawn at the
     point of each click/right-click/drag/scroll. It NEVER intercepts mouse input
-    (so it can't break the clicks it visualizes) and costs nothing when idle —
+    (so it can't break the clicks it visualizes) and costs nothing when idle -
     the repaint timer only runs while ripples are alive."""
 
     DURATION = 0.34   # seconds per ripple
@@ -2719,9 +2883,13 @@ class ClickFeedbackOverlay(QWidget):
         "scroll": (136, 170, 255),  # blue
     }
 
+    BIG_CURSOR_R = 27   # radius (px) of the big Kids-mode cursor
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._ripples = []  # each: {"x","y","kind","t0"}
+        self._hold = None   # Kids-mode hold-to-click progress: {"x","y","frac"}
+        self._cursor = None  # Kids-mode big cursor follower: (gx, gy) or None
         self.setWindowFlags(
             Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint |
             Qt.Tool | Qt.WindowTransparentForInput)
@@ -2729,6 +2897,10 @@ class ClickFeedbackOverlay(QWidget):
         self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         self.setAttribute(Qt.WA_ShowWithoutActivating, True)
         self.setAttribute(Qt.WA_NoSystemBackground, True)
+        # Keep the overlay (click ripples, Kids hold-ring, big cursor) visible
+        # even when another app is focused - otherwise on macOS this Tool window
+        # hides the moment the child clicks into the game. No-op off macOS.
+        self.setAttribute(Qt.WA_MacAlwaysShowToolWindow, True)
         self.setFocusPolicy(Qt.NoFocus)
         self.setGeometry(QApplication.desktop().geometry())  # cover all monitors
 
@@ -2748,20 +2920,102 @@ class ClickFeedbackOverlay(QWidget):
             self._anim_timer.start()
         self.update()
 
+    def set_hold(self, gx, gy, frac):
+        """Show a filling progress ring at global (gx, gy) for the Kids-mode
+        hold-to-click, so the child can see the click is on its way."""
+        frac = 0.0 if frac < 0 else 1.0 if frac > 1 else frac
+        self._hold = {"x": int(gx), "y": int(gy), "frac": frac}
+        if not self._anim_timer.isActive():
+            self._anim_timer.start()
+        self.update()
+
+    def set_cursor(self, gx, gy, active=True):
+        """Show/move the big Kids-mode cursor at global (gx, gy). active=False
+        greys it (hand not currently tracked). Repaints only the small region
+        around the old and new spots so it stays cheap at the tracking frame rate."""
+        ox, oy = self.x(), self.y()
+        R = self.BIG_CURSOR_R + 8
+        old = self._cursor
+        self._cursor = (int(gx), int(gy), bool(active))
+        nx, ny = int(gx) - ox, int(gy) - oy
+        self.update(nx - R, ny - R, 2 * R, 2 * R)
+        if old is not None:
+            self.update(old[0] - ox - R, old[1] - oy - R, 2 * R, 2 * R)
+
+    def clear_cursor(self):
+        if self._cursor is not None:
+            ox, oy = self.x(), self.y()
+            R = self.BIG_CURSOR_R + 8
+            cx, cy = self._cursor[0] - ox, self._cursor[1] - oy
+            self._cursor = None
+            self.update(cx - R, cy - R, 2 * R, 2 * R)
+
+    def clear_hold(self):
+        if self._hold is not None:
+            self._hold = None
+            self.update()
+
+    def reassert_topmost(self):
+        """On Windows, re-raise above a fullscreen browser game so the big Kids
+        cursor is never occluded by it. No-op (and harmless) elsewhere. Uses
+        SWP_NOACTIVATE so it never steals focus from the game."""
+        if sys.platform != "win32":
+            return
+        try:
+            import ctypes
+            HWND_TOPMOST = -1
+            SWP_NOSIZE = 0x0001; SWP_NOMOVE = 0x0002; SWP_NOACTIVATE = 0x0010
+            ctypes.windll.user32.SetWindowPos(
+                int(self.winId()), HWND_TOPMOST, 0, 0, 0, 0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE)
+        except Exception:
+            pass
+
     def _on_tick(self):
         now = time.monotonic()
         self._ripples = [r for r in self._ripples if (now - r["t0"]) < self.DURATION]
         self.update()
-        if not self._ripples:
+        if not self._ripples and self._hold is None:
             self._anim_timer.stop()
 
     def paintEvent(self, event):
-        if not self._ripples:
+        if not self._ripples and self._hold is None and self._cursor is None:
             return
         now = time.monotonic()
         ox, oy = self.x(), self.y()  # virtual-desktop origin -> widget-local
         p = QPainter(self)
+        p.setClipRect(event.rect())  # only repaint the dirty region (cheap on a full-desktop layer)
         p.setRenderHint(QPainter.Antialiasing, True)
+        if self._cursor is not None:
+            # A big, high-contrast cursor for Kids mode: soft shadow, dark ring,
+            # white ring, bright fill - clearly visible on any background. When
+            # the hand isn't being tracked it greys out, so a frozen cursor is
+            # explained even over the game.
+            cx, cy = self._cursor[0] - ox, self._cursor[1] - oy
+            active = self._cursor[2] if len(self._cursor) > 2 else True
+            R = self.BIG_CURSOR_R
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor(0, 0, 0, 55))
+            p.drawEllipse(QPoint(cx + 2, cy + 3), R, R)
+            p.setBrush(Qt.NoBrush)
+            ring = QPen(QColor(43, 58, 85)); ring.setWidth(3); p.setPen(ring)
+            p.drawEllipse(QPoint(cx, cy), R, R)
+            wring = QPen(QColor(255, 255, 255)); wring.setWidth(3); p.setPen(wring)
+            p.drawEllipse(QPoint(cx, cy), R - 3, R - 3)
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor(255, 143, 171) if active else QColor(150, 156, 164))
+            p.drawEllipse(QPoint(cx, cy), R - 5, R - 5)
+        if self._hold is not None:
+            cx, cy = self._hold["x"] - ox, self._hold["y"] - oy
+            frac = self._hold["frac"]
+            R = 46
+            # faint full track + a green arc that fills clockwise from the top
+            track = QPen(QColor(57, 217, 138, 80)); track.setWidth(7)
+            p.setPen(track); p.setBrush(Qt.NoBrush)
+            p.drawEllipse(QPoint(cx, cy), R, R)
+            arc = QPen(QColor(57, 217, 138, 240)); arc.setWidth(7); arc.setCapStyle(Qt.RoundCap)
+            p.setPen(arc)
+            p.drawArc(cx - R, cy - R, 2 * R, 2 * R, 90 * 16, int(-frac * 360 * 16))
         for r in self._ripples:
             prog = (now - r["t0"]) / self.DURATION
             prog = 0.0 if prog < 0 else 1.0 if prog > 1 else prog
@@ -2926,21 +3180,35 @@ class HandCenterGestureController:
         self._limited_baseline = None      # EMA of resting finger pose
         self._limited_click_armed = True   # one click per distinct finger flick
 
+        # Kids-mode runtime state (see _kids_mode_tick). Reset on hand loss.
+        self._kids_smoothed_center = None  # heavy EMA of hand center (jerk damping)
+        self._kids_click_armed = False     # arm only after a non-fist (moving) hand
+        self._kids_close_start = None      # time the current fist-hold began
+        self._kids_open_frames = 0         # consecutive non-fist frames (flicker grace)
+        self._kids_edge_frames = 0         # dwell counter for edge-zone scroll
+        self._kids_last_scroll = 0.0       # rate-limit timestamp for edge scroll
+        self._hand_lost_frames = 0         # consecutive frames with no hand (cursor cue)
+        self._kids_topmost_ctr = 0         # throttles re-asserting overlay topmost (Win)
+
         # Non-configurable state
         self.face_detected = False
         self.looking_at_screen = False
         self.face_detection_history = deque(maxlen=5)
         self.gaze_cooldown = 0
 
-        # Initialize MediaPipe
+        # Initialize MediaPipe. Detect up to 2 hands so that when a helper/aide's
+        # hand also enters the frame we can deliberately pick ONE to control the
+        # cursor (see _select_hand) instead of MediaPipe arbitrarily flipping
+        # between them - which made the cursor jump around.
         self.mp_hands = mp.solutions.hands
         self.hands = self.mp_hands.Hands(
             static_image_mode=False,
-            max_num_hands=1,
+            max_num_hands=2,
             min_detection_confidence=0.7,
             min_tracking_confidence=0.7
         )
         self.mp_draw = mp.solutions.drawing_utils
+        self._tracked_hand_center = None  # locked hand's last center (continuity)
 
         # Face detection for gaze awareness (only if enabled)
         if self.gaze_detection_enabled:
@@ -3010,7 +3278,7 @@ class HandCenterGestureController:
         pyautogui.PAUSE = 0
 
         # macOS: check Accessibility permission (needed for cursor control).
-        # Uses AXIsProcessTrusted from ApplicationServices — the real Accessibility
+        # Uses AXIsProcessTrusted from ApplicationServices - the real Accessibility
         # check. (The previous osascript-based check tested Automation permission,
         # which is a different grant.)
         if sys.platform == "darwin":
@@ -3023,7 +3291,7 @@ class HandCenterGestureController:
                     appkit.AXIsProcessTrusted.restype = ctypes.c_bool
                     is_trusted = appkit.AXIsProcessTrusted()
                 else:
-                    is_trusted = True  # framework unavailable — assume OK
+                    is_trusted = True  # framework unavailable - assume OK
                 if not is_trusted:
                     self.cap.release()
                     self._show_startup_error(
@@ -3038,12 +3306,12 @@ class HandCenterGestureController:
             except SystemExit:
                 raise
             except Exception:
-                pass  # If check itself fails, don't block — let pyautogui try anyway
+                pass  # If check itself fails, don't block - let pyautogui try anyway
 
         # Screen dimensions (DPI-aware on Windows)
         self.screen_width, self.screen_height = pyautogui.size()
 
-        # Gesture state (not configurable — runtime state)
+        # Gesture state (not configurable - runtime state)
         self.pinch_start_time = None
         self._pinch_active = False  # Schmitt-trigger latch for pinch hysteresis
         self.is_dragging = False
@@ -3126,8 +3394,24 @@ class HandCenterGestureController:
     def toggle_limited_mode(self):
         """Toggle Limited mode (simplified control for limited finger mobility)."""
         self.limited_mode = not self.limited_mode
+        if self.limited_mode:
+            self.kids_mode = False  # mutually exclusive control schemes
         self._reset_limited()
+        self._reset_kids()
         print(f"Limited mode: {'ON' if self.limited_mode else 'OFF'}")
+        # Auto-save preference to profile if one is loaded
+        if self.profile_name is not None:
+            self.save_profile()
+
+    def toggle_kids_mode(self):
+        """Toggle Kids mode (young children / jerky movement: open=move,
+        close=click, hover screen edge=scroll)."""
+        self.kids_mode = not self.kids_mode
+        if self.kids_mode:
+            self.limited_mode = False  # mutually exclusive control schemes
+        self._reset_kids()
+        self._reset_limited()
+        print(f"Kids mode: {'ON' if self.kids_mode else 'OFF'}")
         # Auto-save preference to profile if one is loaded
         if self.profile_name is not None:
             self.save_profile()
@@ -3184,6 +3468,10 @@ class HandCenterGestureController:
         self.gaze_detection_enabled = False
         self.limited_mode = bool(merged.get("limited_mode", False))
         self.limited_click_sensitivity = int(_clamp(merged.get("limited_click_sensitivity", 6), 1, 10, 6))
+        self.kids_mode = bool(merged.get("kids_mode", False))
+        self.kids_click_hold = _clamp(merged.get("kids_click_hold", 1.5), 0.5, 4.0, 1.5)
+        if self.kids_mode:
+            self.limited_mode = False  # the two control schemes are mutually exclusive
         self.click_feedback_enabled = merged.get("click_feedback", True)
         self.gesture_actions = dict(merged["gesture_actions"])
         self.calibration = merged["calibration"]
@@ -3280,6 +3568,7 @@ class HandCenterGestureController:
         self.scroll_exit_counter = 0
         self.scroll_enter_counter = 0
         self._reset_limited()
+        self._reset_kids()
 
         # Print summary
         cal = self.calibration
@@ -3324,6 +3613,8 @@ class HandCenterGestureController:
             "gaze_detection_enabled": self.gaze_detection_enabled,
             "limited_mode": self.limited_mode,
             "limited_click_sensitivity": self.limited_click_sensitivity,
+            "kids_mode": self.kids_mode,
+            "kids_click_hold": self.kids_click_hold,
             "click_feedback": self.click_feedback_enabled,
             "gesture_actions": self.gesture_actions,
             "language": _current_lang,
@@ -3514,7 +3805,7 @@ class HandCenterGestureController:
         self._emit_click(kind)
 
     def _fatal_exit(self, title, message, settings_url=None, settings_label="Open Settings"):
-        """Stop tracking, then show a final error dialog and quit — without
+        """Stop tracking, then show a final error dialog and quit - without
         re-entrant stacking. Called from inside the tracking tick on
         unrecoverable camera/tracking loss; stopping the timer BEFORE the modal
         dialog prevents the tick from re-firing during exec_() and piling up
@@ -3628,6 +3919,27 @@ class HandCenterGestureController:
             landmarks.append([lm.x, lm.y])
         return np.array(landmarks)
 
+    def _select_hand(self, multi_hand_landmarks):
+        """Pick the ONE hand that controls the cursor and return its landmarks.
+
+        With a helper/aide also in frame, we must not let their hand steal
+        control. Strategy: once a hand is being tracked, keep following the hand
+        whose center is closest to the last tracked center (continuity), so a
+        second hand entering elsewhere is ignored. On a fresh lock (no prior
+        hand) we pick the most-centered hand, since the student sits in front of
+        the camera while a helper reaches in from the side."""
+        cands = [self.get_landmarks(hl) for hl in multi_hand_landmarks]
+        centers = [self.calculate_hand_center(lm) for lm in cands]
+        prev = self._tracked_hand_center
+        if prev is not None:
+            idx = min(range(len(centers)),
+                      key=lambda i: (centers[i][0] - prev[0]) ** 2 + (centers[i][1] - prev[1]) ** 2)
+        else:
+            idx = min(range(len(centers)),
+                      key=lambda i: (centers[i][0] - 0.5) ** 2 + (centers[i][1] - 0.5) ** 2)
+        self._tracked_hand_center = centers[idx]
+        return cands[idx]
+
     def calculate_hand_center(self, landmarks):
         """Calculate the center of the hand using key landmarks"""
         # Use palm landmarks and wrist for a stable center point
@@ -3701,21 +4013,22 @@ class HandCenterGestureController:
         """Clear Limited-mode flick state (call on hand loss / mode switch)."""
         self._limited_baseline = None
         self._limited_click_armed = True
+        self.prev_hand_center = None   # re-seed cleanly so a mode switch can't nudge
 
     def _finger_pose_feature(self, landmarks):
         """Fingertip positions relative to the wrist, normalized by hand size.
         Because it's relative to the wrist and scaled by the palm, this isolates
-        finger articulation from where the hand is — so moving the hand to steer
+        finger articulation from where the hand is - so moving the hand to steer
         the cursor barely changes it, but flicking a finger spikes it."""
         wrist = landmarks[0]
-        mcp = landmarks[9]  # middle-finger base — stable hand-scale reference
+        mcp = landmarks[9]  # middle-finger base - stable hand-scale reference
         scale = math.hypot(mcp[0] - wrist[0], mcp[1] - wrist[1]) or 1e-6
         return [((landmarks[t][0] - wrist[0]) / scale,
                  (landmarks[t][1] - wrist[1]) / scale)
                 for t in (4, 8, 12, 16, 20)]
 
     def _move_cursor_with_hand(self, hand_center):
-        """Move the OS cursor to follow the hand — calibrated absolute mapping
+        """Move the OS cursor to follow the hand - calibrated absolute mapping
         when available, else relative deltas. Mirrors the normal cursor-control
         path but with no open-hand requirement (used by Limited mode)."""
         if self.calibration is not None:
@@ -3743,7 +4056,7 @@ class HandCenterGestureController:
     def _limited_mode_tick(self, landmarks, hand_center, current_time):
         """Simplified control for users with limited finger mobility: the cursor
         follows the hand in ANY pose, and a quick finger movement fires a single
-        left click. No pinch/drag/scroll/fist/dwell — just move and click."""
+        left click. No pinch/drag/scroll/fist/dwell - just move and click."""
         feat = self._finger_pose_feature(landmarks)
         clicked = False
         # Thresholds derived from the Settings sensitivity slider. settle is a
@@ -3752,7 +4065,7 @@ class HandCenterGestureController:
         settle_threshold = flick_threshold * 0.4
 
         if self._limited_baseline is None:
-            # First frame with this hand — adopt its pose as the resting baseline
+            # First frame with this hand - adopt its pose as the resting baseline
             # so we don't read the initial appearance as a flick.
             self._limited_baseline = feat
         else:
@@ -3771,7 +4084,7 @@ class HandCenterGestureController:
                 clicked = True
                 print("Limited click")
             elif not self._limited_click_armed and deviation < settle_threshold:
-                # Fingers returned to rest — ready for the next click.
+                # Fingers returned to rest - ready for the next click.
                 self._limited_click_armed = True
 
             # Let the baseline drift toward the current pose so a deliberately
@@ -3785,6 +4098,132 @@ class HandCenterGestureController:
 
         self._move_cursor_with_hand(hand_center)
         return "left_click" if clicked else "cursor_control"
+
+    # ---- Kids mode (young children / jerky movement) ----
+
+    def _reset_kids(self):
+        """Clear Kids-mode runtime state (call on hand loss / mode switch).
+        Click starts disarmed so a hand that reappears already in a fist can't
+        click - it must show a non-fist (moving) hand first."""
+        self._kids_smoothed_center = None
+        self._kids_click_armed = False
+        self._kids_close_start = None
+        self._kids_open_frames = 0
+        self._kids_edge_frames = 0
+        self.prev_hand_center = None   # re-seed cleanly so a mode switch can't nudge
+        ov = getattr(self, "overlay", None)
+        if ov is not None:
+            ov.clear_hold()
+
+    def _kids_edge_scroll(self, current_time):
+        """Scroll when the cursor rests near the top/bottom screen edge. Requires
+        a short dwell in the zone (so passing through doesn't scroll) and is
+        rate-limited so it scrolls gently. Returns True if it scrolled."""
+        try:
+            _cx, cy = pyautogui.position()
+        except Exception:
+            return False
+        edge = 50  # px from top/bottom that counts as the scroll zone
+        in_top = cy <= edge
+        in_bottom = cy >= self.screen_height - edge
+        if not (in_top or in_bottom):
+            self._kids_edge_frames = 0
+            return False
+        self._kids_edge_frames += 1
+        if self._kids_edge_frames < 16:     # ~0.5s dwell so passing through won't scroll
+            return False
+        if current_time - self._kids_last_scroll < 0.12:   # gentle, fps-independent
+            return True
+        try:
+            pyautogui.scroll(2 if in_top else -2)
+            self._emit_click("scroll")
+        except Exception:
+            return False
+        self._kids_last_scroll = current_time
+        return True
+
+    def _kids_move(self, sc):
+        """Relative cursor movement for Kids mode with a calm fixed gain and NO
+        extra dead-zone (the heavy EMA already removes tremor; a second dead-zone
+        just made fine aim stall). prev_hand_center=None re-seeds a clean baseline
+        after a freeze so the cursor doesn't lurch when the hand reopens."""
+        KIDS_GAIN = 1.3
+        if self.prev_hand_center is None:
+            self.prev_hand_center = list(sc)
+            return
+        dx = (sc[0] - self.prev_hand_center[0]) * self.screen_width * KIDS_GAIN
+        dy = (sc[1] - self.prev_hand_center[1]) * self.screen_height * KIDS_GAIN
+        try:
+            cx, cy = pyautogui.position()
+            nx = max(self.screen_edge_margin, min(self.screen_width - self.screen_edge_margin, cx + dx))
+            ny = max(self.screen_edge_margin, min(self.screen_height - self.screen_edge_margin, cy + dy))
+            pyautogui.moveTo(nx, ny, duration=0)
+        except Exception as e:
+            print(f"Cursor move failed: {e}")
+        self.prev_hand_center = list(sc)
+
+    def _kids_mode_tick(self, landmarks, hand_center, current_time):
+        """Forgiving control for young children with jerky/limited movement:
+        the hand moves the cursor (heavily smoothed) UNLESS it's a fist, and
+        HOLDING a fist for kids_click_hold seconds fires one left click (a filling
+        ring shows progress). Hovering the top/bottom screen edge scrolls. The
+        cursor freezes during the hold so the click lands where they aimed, and a
+        few frames of grace keep a jittery fist from resetting the hold timer."""
+        # Heavy EMA on the hand center damps jerky motion before it moves anything.
+        if self._kids_smoothed_center is None:
+            self._kids_smoothed_center = [hand_center[0], hand_center[1]]
+        else:
+            a = 0.25
+            self._kids_smoothed_center[0] = self._kids_smoothed_center[0] * (1 - a) + hand_center[0] * a
+            self._kids_smoothed_center[1] = self._kids_smoothed_center[1] * (1 - a) + hand_center[1] * a
+        sc = self._kids_smoothed_center
+
+        extended_count, _ = self.count_extended_fingers(landmarks)
+        is_fist = extended_count <= 1   # only a fist holds still / clicks
+        ov = getattr(self, "overlay", None)
+
+        if is_fist:
+            # FIST - freeze the cursor (keep aim) and run the hold-to-click timer.
+            self._kids_open_frames = 0
+            self.prev_hand_center = list(sc)
+            if self._kids_close_start is None:
+                self._kids_close_start = current_time
+            held = current_time - self._kids_close_start
+            if self._kids_click_armed and held >= self.kids_click_hold:
+                if ov is not None:
+                    ov.clear_hold()
+                self._do_action("left_click")
+                self.last_action_time = current_time
+                self._kids_click_armed = False   # must reopen (move) before next click
+                self._kids_close_start = None
+                print("Kids click")
+                return "left_click"
+            if ov is not None and self._kids_click_armed:
+                try:
+                    hx, hy = pyautogui.position()
+                    ov.set_hold(hx, hy, held / self.kids_click_hold)
+                except Exception:
+                    pass
+            return "kids_holding"
+
+        # NOT a fist. A brief non-fist blip (jittery hand) must NOT reset an
+        # in-progress hold, so keep holding for a few grace frames.
+        self._kids_open_frames += 1
+        if self._kids_close_start is not None and self._kids_open_frames < 4:
+            self.prev_hand_center = list(sc)
+            return "kids_holding"
+
+        # Genuinely moving now.
+        if self._kids_close_start is not None:
+            # Just left a hold - re-seed so movement starts clean (no lurch).
+            self._kids_close_start = None
+            self.prev_hand_center = None
+        if ov is not None:
+            ov.clear_hold()
+        self._kids_click_armed = True
+        self._kids_move(sc)
+        self._kids_edge_scroll(current_time)   # after the move, on the new position
+        return "cursor_control"
 
     def detect_face_and_gaze(self, frame):
         """Detect if user's face is visible and roughly looking at screen"""
@@ -3877,7 +4316,7 @@ class HandCenterGestureController:
         )
 
         if not is_two_finger_pose:
-            # Out of pose — require a fresh run of in-pose frames before re-arming.
+            # Out of pose - require a fresh run of in-pose frames before re-arming.
             self.scroll_enter_counter = 0
             # Only reset if we've been out of pose for a bit (sticky mode)
             if not hasattr(self, 'scroll_exit_counter'):
@@ -3902,7 +4341,7 @@ class HandCenterGestureController:
         middle_tip_y = landmarks[12][1]  # Middle fingertip
         current_fingers_y = (index_tip_y + middle_tip_y) / 2
 
-        # Initialize reference position on first detection — but only after a
+        # Initialize reference position on first detection - but only after a
         # short entry debounce. Exit already has a 3-frame grace; entry used to
         # be instant, so a single mis-classified frame (mid-pinch, hand reshaping)
         # could hijack the cursor into scroll mode and capture a bogus reference.
@@ -3994,6 +4433,7 @@ class HandCenterGestureController:
             self.dwell_start_time = None
             self.dwell_triggered = False
             self._reset_limited()
+            self._reset_kids()
             return "safety_disabled" if self.gaze_detection_enabled else "disabled"
 
         current_time = time.time()
@@ -4001,9 +4441,12 @@ class HandCenterGestureController:
         # Calculate hand center
         hand_center = self.calculate_hand_center(landmarks)
 
-        # LIMITED MODE: simplified control for limited finger mobility — cursor
-        # follows the hand in any pose and a quick finger movement single-clicks.
-        # Bypasses the whole pinch/drag/scroll/fist/dwell pipeline below.
+        # KIDS MODE: open hand = move (heavily smoothed), close = click, hover
+        # screen edge = scroll. LIMITED MODE: cursor follows hand in any pose +
+        # flick-to-click. Both bypass the normal pinch/drag/scroll/fist pipeline
+        # and are mutually exclusive.
+        if self.kids_mode:
+            return self._kids_mode_tick(landmarks, hand_center, current_time)
         if self.limited_mode:
             return self._limited_mode_tick(landmarks, hand_center, current_time)
 
@@ -4011,11 +4454,11 @@ class HandCenterGestureController:
         thumb_tip = landmarks[4]
         index_tip = landmarks[8]
 
-        # Calculate pinch — with Schmitt-trigger hysteresis. Enter the pinched
+        # Calculate pinch - with Schmitt-trigger hysteresis. Enter the pinched
         # state below the threshold, but only LEAVE it once the fingers open past
         # threshold * 1.25. A single hard compare made a hand resting near the
         # threshold flicker pinched/unpinched every frame, firing false clicks and
-        # flickering drag start/stop — the hysteresis band absorbs that jitter.
+        # flickering drag start/stop - the hysteresis band absorbs that jitter.
         pinch_distance = self.calculate_distance(thumb_tip, index_tip)
         if self.pinch_threshold is None:
             self._pinch_active = False
@@ -4223,7 +4666,7 @@ class HandCenterGestureController:
                     exit_radius = (self.dwell_click_radius * 2.0
                                    if self.dwell_triggered else self.dwell_click_radius)
                     if dist > exit_radius:
-                        # Cursor moved outside radius — reset
+                        # Cursor moved outside radius - reset
                         self.dwell_reference_pos = current_pos
                         self.dwell_start_time = current_time
                         self.dwell_triggered = False
@@ -4436,6 +4879,24 @@ class HandCenterGestureController:
         or OpenCV should never crash the whole app.
         """
         try:
+            # Big Kids-mode cursor follows the OS cursor every frame (cross-platform
+            # overlay; the real system cursor stays small underneath it).
+            _ov = getattr(self, "overlay", None)
+            if _ov is not None:
+                if self.kids_mode and not self.paused:
+                    try:
+                        # grey the cursor once the hand has been gone a few frames
+                        _ov.set_cursor(*pyautogui.position(),
+                                       active=(self._hand_lost_frames < 5))
+                    except Exception:
+                        pass
+                    # Keep the big cursor above a fullscreen browser game on Windows.
+                    self._kids_topmost_ctr += 1
+                    if self._kids_topmost_ctr >= 45:   # ~0.75s
+                        self._kids_topmost_ctr = 0
+                        _ov.reassert_topmost()
+                else:
+                    _ov.clear_cursor()
             _bench = self._bench
             _t0 = time.perf_counter() if _bench is not None else 0.0
             _t1 = _t2 = 0.0
@@ -4491,6 +4952,7 @@ class HandCenterGestureController:
                 self.scroll_enter_counter = 0
                 self._reset_dwell()
                 self._reset_limited()
+                self._reset_kids()
                 self._last_gesture = "paused"
                 return
 
@@ -4504,12 +4966,14 @@ class HandCenterGestureController:
             gesture = "no_hand"
 
             if hand_results.multi_hand_landmarks:
-                for hand_landmarks in hand_results.multi_hand_landmarks:
-                    landmarks = self.get_landmarks(hand_landmarks)
-                    # detect_gestures computes its own finger states; the extra
-                    # count_extended_fingers call here was discarded every frame.
-                    gesture = self.detect_gestures(landmarks)
+                self._hand_lost_frames = 0
+                # Control with exactly ONE hand (the student's), even if a helper's
+                # hand is also in frame - prevents the cursor jumping between hands.
+                landmarks = self._select_hand(hand_results.multi_hand_landmarks)
+                gesture = self.detect_gestures(landmarks)
             else:
+                self._hand_lost_frames += 1
+                self._tracked_hand_center = None   # re-lock fresh when a hand returns
                 # Clean up when hand lost
                 if self.is_dragging:
                     try:
@@ -4533,6 +4997,7 @@ class HandCenterGestureController:
                 self.scroll_enter_counter = 0
                 self._reset_dwell()
                 self._reset_limited()
+                self._reset_kids()
 
             if _bench is not None:
                 _bench.record(_t0, _t1, _t2, time.perf_counter(),
@@ -4581,16 +5046,16 @@ class HandCenterGestureController:
         if self.profile_name is None:
             default = self.get_default_profile()
             if default and self.load_profile(default):
-                if self.calibration is None and not self.limited_mode:
-                    # Default profile was never calibrated — don't trap the user
+                if self.calibration is None and not self.limited_mode and not self.kids_mode:
+                    # Default profile was never calibrated - don't trap the user
                     # in its calibration flow; fall back to the normal picker.
-                    # (Limited mode needs no calibration, so it's exempt.)
+                    # (Limited/Kids modes need no calibration, so they're exempt.)
                     self.profile_name = None
                 else:
                     print(f"Auto-loaded default profile '{default}'.")
-        # A profile is ready to run if it's calibrated OR it uses Limited mode
-        # (which works uncalibrated via relative cursor movement).
-        if self.profile_name is not None and (self.calibration is not None or self.limited_mode):
+        # A profile is ready to run if it's calibrated OR it uses Limited/Kids mode
+        # (which work uncalibrated via relative cursor movement).
+        if self.profile_name is not None and (self.calibration is not None or self.limited_mode or self.kids_mode):
             print(f"Using pre-loaded profile '{self.profile_name}'.")
         else:
             wizard = SetupWizard(self)
@@ -4636,7 +5101,7 @@ class HandCenterGestureController:
             # A local QEventLoop returns here when the wizard closes (instead of
             # app.exec_(), whose quit would tear down the main loop), and
             # disabling auto-quit stops Qt from quitting the whole app when the
-            # wizard closes while the panel is hidden — the cause of the
+            # wizard closes while the panel is hidden - the cause of the
             # "restart setup quits the app" crash.
             prev_quit = app.quitOnLastWindowClosed()
             app.setQuitOnLastWindowClosed(False)
@@ -4671,6 +5136,9 @@ class HandCenterGestureController:
         panel.show()
         panel.start()
         tracking_timer.start()
+        # Kids profiles boot straight into the practice games.
+        if self.kids_mode:
+            open_practice_games()
         app.exec_()
 
         # Final cleanup
@@ -4688,7 +5156,7 @@ class HandCenterGestureController:
 if __name__ == "__main__":
     # In production (frozen exe), suppress all console output. Open devnull as
     # UTF-8 (errors="replace") so the emoji debug prints can't raise
-    # UnicodeEncodeError on a cp1252 stream — same reason as airpoint_entry.py.
+    # UnicodeEncodeError on a cp1252 stream - same reason as airpoint_entry.py.
     if FROZEN:
         sys.stdout = open(os.devnull, "w", encoding="utf-8", errors="replace")
         sys.stderr = open(os.devnull, "w", encoding="utf-8", errors="replace")

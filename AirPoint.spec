@@ -70,6 +70,8 @@ a = Analysis(
         (os.path.join(PROJECT_DIR, 'main.py'), '.'),
         (os.path.join(PROJECT_DIR, 'launcher.py'), '.'),
         (os.path.join(PROJECT_DIR, 'VERSION'), '.'),
+        # Bundled practice games (opened from the "Practice games" button)
+        (os.path.join(PROJECT_DIR, 'game'), 'game'),
     ] + mediapipe_datas,
     hiddenimports=[
         'mediapipe',
