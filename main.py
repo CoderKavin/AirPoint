@@ -68,9 +68,10 @@ from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
                               QStackedWidget, QProgressBar, QSizePolicy,
                               QCheckBox, QSlider, QInputDialog, QMessageBox,
                               QListWidgetItem, QComboBox, QFrame, QAbstractButton,
-                              QGridLayout, QScrollArea)
-from PyQt5.QtCore import Qt, QTimer, QEventLoop, pyqtSignal, QPoint, QSize
-from PyQt5.QtGui import QImage, QPixmap, QFont, QPainter, QColor, QPen
+                              QGridLayout, QScrollArea, QSystemTrayIcon, QMenu,
+                              QAction)
+from PyQt5.QtCore import Qt, QTimer, QEventLoop, pyqtSignal, QPoint, QSize, QRectF, QPointF
+from PyQt5.QtGui import QImage, QPixmap, QFont, QPainter, QColor, QPen, QIcon
 
 # APP_DIR: when frozen, use the folder containing the exe, not the temp bundle dir
 if FROZEN:
@@ -79,6 +80,15 @@ else:
     APP_DIR = os.path.dirname(os.path.abspath(__file__))
 PROFILES_DIR = os.path.join(APP_DIR, "profiles")
 CRASH_LOG = os.path.join(APP_DIR, "crash.log")
+
+# Windows reserved device-name stems: "{name}.json" for any of these writes to a
+# device instead of a real file, so a profile named e.g. "NUL" would silently
+# vanish on Windows. Used by the profile-name sanitizers to suffix such names.
+_WINDOWS_RESERVED_NAMES = {
+    "CON", "PRN", "AUX", "NUL",
+    *(f"COM{i}" for i in range(1, 10)),
+    *(f"LPT{i}" for i in range(1, 10)),
+}
 
 # ---------- Crash logging ----------
 
@@ -240,9 +250,17 @@ def set_autostart(enabled):
             )
             bat_path = os.path.join(startup_dir, "AirPoint.bat")
             if enabled:
-                python = sys.executable
-                with open(bat_path, "w") as f:
-                    f.write(f'@echo off\nstart "" /min "{python}" "{launcher}"\n')
+                os.makedirs(startup_dir, exist_ok=True)
+                # Frozen: sys.executable IS AirPoint.exe (launcher.py/main.py live
+                # in _internal/, not next to it), so launch the exe directly -
+                # exactly like the installer's own shortcut. Source build: run the
+                # script through the Python interpreter.
+                if FROZEN:
+                    cmd = f'start "" /min "{sys.executable}"'
+                else:
+                    cmd = f'start "" /min "{sys.executable}" "{launcher}"'
+                with open(bat_path, "w", encoding="utf-8") as f:
+                    f.write(f'@echo off\n{cmd}\n')
             else:
                 if os.path.exists(bat_path):
                     os.remove(bat_path)
@@ -401,6 +419,49 @@ STRINGS = {
         "panel_dwell_off": "  Auto-click when you hold still  -  OFF\n  Tap here to turn this on",
         "panel_redo": "Redo Setup",
         "panel_stop": "Stop AirPoint",
+        # Main window navigation
+        "nav_home": "Home",
+        "nav_modes": "Modes",
+        "nav_tune": "Settings",
+        "nav_profiles": "Profiles",
+        "nav_help": "Help",
+        "home_cheatsheet_title": "How to control it",
+        "home_see_yourself": "See yourself",
+        # Camera preview window
+        "preview_title": "AirPoint - Camera",
+        "preview_right": "Right hand detected",
+        "preview_left": "Left hand detected",
+        "preview_none": "No hand detected",
+        "preview_hint": "This is just a preview - close it any time.",
+        # Dynamic cheat-sheet (Standard mode pinch/fist reflect your remapping)
+        "cheat_pinch_title": "Pinch",
+        "cheat_pinch_desc": "Touch your thumb and the finger next to it together to {action}.",
+        "cheat_fist_title": "Make a fist",
+        "cheat_fist_desc": "Close your hand into a fist to {action}.",
+        "cheat_limited_move_title": "Move the cursor",
+        "cheat_limited_move_desc": "Move your hand in any pose - no need to open it.",
+        "cheat_limited_click_title": "Click",
+        "cheat_limited_click_desc": "Flick a finger quickly. Set how easily in Modes.",
+        "cheat_kids_move_title": "Move the cursor",
+        "cheat_kids_move_desc": "Just move your hand in front of the camera.",
+        "cheat_kids_click_title": "Click",
+        "cheat_kids_click_desc": "Make a fist and hold it still for a moment.",
+        "cheat_kids_scroll_title": "Scroll",
+        "cheat_kids_scroll_desc": "Move your hand near the top or bottom edge of the screen.",
+        "verb_left_click": "left-click",
+        "verb_right_click": "right-click",
+        "verb_double_click": "double-click",
+        "verb_middle_click": "middle-click",
+        # Control modes (plain-language descriptions)
+        "mode_standard": "Standard  -  pinch to click, make a fist to right-click",
+        "mode_limited": "Limited  -  move and flick-click without opening your hand",
+        "mode_kids": "Kids  -  move your hand, hold a fist to click",
+        # System tray
+        "tray_show": "Show AirPoint",
+        "tray_pause": "Pause tracking",
+        "tray_resume": "Resume tracking",
+        "tray_stop": "Stop AirPoint",
+        "tray_running_tip": "AirPoint is still running. Use the tray icon to show it again or stop it.",
         # Crash
         "crash_title": "AirPoint - Something went wrong",
         "crash_msg": "AirPoint ran into an unexpected error and needs to close.\n\nYour profiles and settings are safe.",
@@ -780,7 +841,9 @@ T = SimpleNamespace(**(_DARK if IS_DARK else _LIGHT))
 if sys.platform == "darwin":
     _UI_FAMILIES = [".AppleSystemUIFont", "SF Pro Text", "Helvetica Neue", "Lucida Grande"]
 elif sys.platform == "win32":
-    _UI_FAMILIES = ["Segoe UI Variable Text", "Segoe UI", "Tahoma"]
+    # "Nirmala UI" ships with Windows 8+ and covers Devanagari/Malayalam/Tamil,
+    # which none of the Segoe families do - keeps Hindi/Malayalam/Tamil legible.
+    _UI_FAMILIES = ["Segoe UI Variable Text", "Segoe UI", "Tahoma", "Nirmala UI"]
 else:
     _UI_FAMILIES = ["Inter", "Noto Sans", "Ubuntu", "DejaVu Sans"]
 
@@ -949,11 +1012,76 @@ class Switch(QAbstractButton):
 
 
 class NoScrollSlider(QSlider):
-    """A slider that ignores the mouse wheel - it only changes by click+drag,
-    so scrolling the page over a slider never nudges its value."""
+    """A custom-painted horizontal slider: a rounded track, an accent-filled
+    progress portion, and a crisp circular handle with a soft shadow. Painted by
+    hand (like the Switch) so it looks identical and clean on macOS AND Windows -
+    the Fusion-style CSS handle renders slightly faceted at small sizes and
+    differs across platforms. Also: ignores the mouse wheel (so scrolling the
+    page over it never nudges the value) and supports click-to-position + drag."""
+
+    GROOVE_H = 6
+    HANDLE_R = 10
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setMinimumHeight(self.HANDLE_R * 2 + 4)
 
     def wheelEvent(self, event):
         event.ignore()  # let the parent scroll area handle the wheel instead
+
+    def _frac(self):
+        span = self.maximum() - self.minimum()
+        f = 0.0 if span == 0 else (self.value() - self.minimum()) / span
+        return (1.0 - f) if self.invertedAppearance() else f
+
+    def _value_from_x(self, x):
+        r = self.HANDLE_R
+        usable = max(1, self.width() - 2 * r)
+        f = min(1.0, max(0.0, (x - r) / usable))
+        if self.invertedAppearance():
+            f = 1.0 - f
+        return round(self.minimum() + f * (self.maximum() - self.minimum()))
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton and self.orientation() == Qt.Horizontal:
+            self.setValue(self._value_from_x(event.pos().x()))
+            event.accept()
+        else:
+            super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if (event.buttons() & Qt.LeftButton) and self.orientation() == Qt.Horizontal:
+            self.setValue(self._value_from_x(event.pos().x()))
+            event.accept()
+        else:
+            super().mouseMoveEvent(event)
+
+    def paintEvent(self, event):
+        if self.orientation() != Qt.Horizontal:
+            return super().paintEvent(event)  # only the horizontal look is customised
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        r = self.HANDLE_R
+        cy = self.height() / 2.0
+        gh = self.GROOVE_H
+        left, right = float(r), float(self.width() - r)
+        hx = left + self._frac() * (right - left)
+        p.setPen(Qt.NoPen)
+        # full track
+        p.setBrush(QColor(T.surface_hover))
+        p.drawRoundedRect(QRectF(left, cy - gh / 2, right - left, gh), gh / 2, gh / 2)
+        # filled (accent) portion up to the handle
+        if hx > left:
+            p.setBrush(QColor(T.accent))
+            p.drawRoundedRect(QRectF(left, cy - gh / 2, hx - left, gh), gh / 2, gh / 2)
+        # soft shadow + circular handle with a thin accent ring
+        p.setBrush(QColor(0, 0, 0, 55))
+        p.drawEllipse(QPointF(hx, cy + 1.0), r, r)
+        p.setBrush(QColor(T.slider_handle))
+        p.setPen(QPen(QColor(T.accent), 2))
+        p.drawEllipse(QPointF(hx, cy), r - 1.5, r - 1.5)
+        p.end()
 
 
 class NoScrollComboBox(QComboBox):
@@ -1044,6 +1172,37 @@ def open_practice_games():
     print(f"Practice games not found near {base}")
 
 
+def _app_icon():
+    """A QIcon for the window, taskbar/dock and system tray. Prefers the bundled
+    assets/icon.png (also added to AirPoint.spec datas); falls back to a painted
+    accent-blue 'A' so the tray always has a glyph even when the asset is missing
+    (e.g. running from source before the icon is bundled). Must be called after a
+    QApplication exists (QPixmap needs one)."""
+    base = getattr(sys, "_MEIPASS", None) or os.path.dirname(os.path.abspath(__file__))
+    for path in (os.path.join(base, "assets", "icon.png"),
+                 os.path.join(APP_DIR, "assets", "icon.png")):
+        if os.path.exists(path):
+            ic = QIcon(path)
+            if not ic.isNull():
+                return ic
+    # Painted fallback - a rounded accent square with an "A".
+    pix = QPixmap(64, 64)
+    pix.fill(QColor(0, 0, 0, 0))
+    p = QPainter(pix)
+    p.setRenderHint(QPainter.Antialiasing, True)
+    p.setPen(Qt.NoPen)
+    p.setBrush(QColor(T.accent))
+    p.drawRoundedRect(4, 4, 56, 56, 14, 14)
+    f = QFont()
+    f.setBold(True)
+    f.setPointSize(32)
+    p.setFont(f)
+    p.setPen(QColor(T.on_accent))
+    p.drawText(pix.rect(), Qt.AlignCenter, "A")
+    p.end()
+    return QIcon(pix)
+
+
 class CameraWidget(QLabel):
     """QLabel subclass that displays OpenCV BGR frames."""
 
@@ -1059,6 +1218,54 @@ class CameraWidget(QLabel):
         q_img = QImage(rgb.data, w, h, ch * w, QImage.Format_RGB888)
         scaled = q_img.scaled(self.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
         self.setPixmap(QPixmap.fromImage(scaled))
+
+
+class CameraPreview(QWidget):
+    """A 'see yourself' window: the live camera with the detected hand drawn on
+    it and a label for which hand (Left/Right) is in control. The tracking loop
+    feeds it each frame while it's visible (see _tracking_tick / _update_preview).
+    A normal window - closing it just stops the feed; reopen from Home."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(S("preview_title"))
+        self.setWindowIcon(_app_icon())
+        self.setStyleSheet(BASE_QSS + f" CameraPreview {{ background-color: {T.bg}; }}")
+        v = QVBoxLayout(self)
+        v.setContentsMargins(16, 16, 16, 16)
+        v.setSpacing(10)
+        self.view = CameraWidget(480, 270)
+        v.addWidget(self.view)
+        self.status = QLabel(S("preview_none"))
+        self.status.setFont(_font(14, QFont.DemiBold))
+        self.status.setAlignment(Qt.AlignCenter)
+        self.status.setFixedHeight(40)
+        self._set_status_style(T.surface, T.text_dim)
+        v.addWidget(self.status)
+        hint = QLabel(S("preview_hint"))
+        hint.setFont(_font(11))
+        hint.setAlignment(Qt.AlignCenter)
+        hint.setStyleSheet(f"color: {T.text_dim};")
+        v.addWidget(hint)
+
+    def _set_status_style(self, bg, fg):
+        self.status.setStyleSheet(
+            f"background-color: {bg}; color: {fg}; border-radius: 10px; padding: 6px;")
+
+    def show_frame(self, cv_frame):
+        self.view.update_frame(cv_frame)
+
+    def set_hand(self, label):
+        """label is mediapipe's 'Left'/'Right' for the controlling hand, or None."""
+        if label == "Right":
+            self.status.setText(S("preview_right"))
+            self._set_status_style(T.accent_soft, T.accent)
+        elif label == "Left":
+            self.status.setText(S("preview_left"))
+            self._set_status_style(T.accent_soft, T.accent)
+        else:
+            self.status.setText(S("preview_none"))
+            self._set_status_style(T.surface, T.text_dim)
 
 
 class SetupWizard(QWidget):
@@ -1645,6 +1852,8 @@ class SetupWizard(QWidget):
     def _on_name_entered(self):
         raw = self.name_input.text().strip()
         name = "".join(c for c in raw if c.isalnum() or c in " _-").strip() or "default"
+        if name.upper() in _WINDOWS_RESERVED_NAMES:
+            name = f"{name}_"  # avoid Windows device names (CON, NUL, ...)
         self.profile_name = name
         self.controller.profile_name = name
         self.welcome_title.setText(S("welcome_hi", name=name))
@@ -2051,223 +2260,147 @@ class SetupWizard(QWidget):
         self.finished.emit(self.result)
 
 
-class StatusPanel(QWidget):
-    """User-friendly control panel shown during tracking."""
+class HomePage(QWidget):
+    """The landing page inside the main window: live status, quick Pause / Stop,
+    practice games, and a gestures cheat-sheet - everything you reach for while
+    AirPoint is running. Replaces the old floating StatusPanel's controls."""
 
-    def __init__(self, controller):
-        super().__init__()
+    # Maps the controller's internal gesture name to a friendly status line.
+    _FRIENDLY = {
+        "cursor_control": "panel_moving",
+        "left_click": "panel_clicked",
+        "drag_start": "panel_dragging",
+        "dragging": "panel_dragging",
+        "drag_end": "panel_drag_done",
+        "right_click": "panel_right_clicked",
+        "two_finger_scroll": "panel_scrolling",
+        "scroll_active": "panel_scrolling",
+        "pinch_wait": "panel_pinch_drag",
+        "dwell_click": "panel_auto_clicked",
+        "safety_disabled": "panel_look_screen",
+        "idle": "panel_ready",
+    }
+
+    def __init__(self, controller, parent=None):
+        super().__init__(parent)
         self.controller = controller
-        self._syncing = False
-        self.setWindowTitle("AirPoint")
-        self.setFixedWidth(360)
-        self.setStyleSheet(BASE_QSS + f" StatusPanel {{ background-color: {T.bg}; }}")
-        self.setWindowFlags(Qt.WindowStaysOnTopHint | Qt.Tool)
 
-        root = QVBoxLayout(self)
-        root.setContentsMargins(20, 18, 20, 18)
-        root.setSpacing(14)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
 
-        # ---- Header ----
-        head = QHBoxLayout()
-        head.setSpacing(8)
-        brand = QLabel("AirPoint")
-        brand.setFont(_font(17, QFont.DemiBold))
-        brand.setStyleSheet(f"color: {T.text};")
-        head.addWidget(brand)
-        head.addStretch(1)
+        header = QLabel(S("nav_home"))
+        header.setFont(_font(20, QFont.Bold))
+        header.setStyleSheet(f"color: {T.text}; padding: 18px 24px 6px 24px;")
+        outer.addWidget(header)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        outer.addWidget(scroll, 1)
+
+        content = QWidget()
+        content.setObjectName("scrollcontent")
+        content.setStyleSheet(f"#scrollcontent {{ background-color: {T.bg}; }}")
+        scroll.setWidget(content)
+        v = QVBoxLayout(content)
+        v.setContentsMargins(24, 8, 24, 18)
+        v.setSpacing(14)
+
+        # Profile greeting
         self.profile_label = QLabel()
         self.profile_label.setFont(_font(12))
         self.profile_label.setStyleSheet(f"color: {T.text_dim};")
-        head.addWidget(self.profile_label)
-        root.addLayout(head)
+        v.addWidget(self.profile_label)
 
-        # ---- Status pill ----
+        # Live status pill
         self.status_badge = QLabel(S("panel_looking"))
-        self.status_badge.setFont(_font(13, QFont.DemiBold))
+        self.status_badge.setFont(_font(15, QFont.DemiBold))
         self.status_badge.setAlignment(Qt.AlignCenter)
-        self.status_badge.setFixedHeight(44)
+        self.status_badge.setFixedHeight(50)
         self._set_badge(T.surface, T.text_dim, border=T.border)
-        root.addWidget(self.status_badge)
+        v.addWidget(self.status_badge)
 
-        # ---- Controls (grouped switch rows) ----
-        card = Card()
-        self.pause_switch = Switch()
-        self.gaze_switch = Switch()
-        self.dwell_switch = Switch()
-        self.limited_switch = Switch()
-        self.kids_switch = Switch()
-        card.add_row(make_row("Pause tracking", self.pause_switch))
-        card.add_row(make_row(_split_toggle(S("panel_gaze_on")), self.gaze_switch))
-        card.add_row(make_row(_split_toggle(S("panel_dwell_on")), self.dwell_switch))
-        card.add_row(make_row("Limited mode  -  move + click without opening your hand",
-                              self.limited_switch))
-        card.add_row(make_row("Kids mode  -  move your hand; hold a fist to click",
-                              self.kids_switch))
-        root.addWidget(card)
-        self.limited_switch.toggled.connect(self._on_limited_switch)
-        self.kids_switch.toggled.connect(self._on_kids_switch)
-        self.pause_switch.toggled.connect(self._on_pause_switch)
-        self.gaze_switch.toggled.connect(self._on_gaze_switch)
-        self.dwell_switch.toggled.connect(self._on_dwell_switch)
+        # Prominent Pause + Stop row
+        actions = QHBoxLayout()
+        actions.setSpacing(10)
+        self.pause_btn = QPushButton("Pause")
+        self.pause_btn.setObjectName("secondary")
+        self.pause_btn.setCursor(Qt.PointingHandCursor)
+        self.pause_btn.setFixedHeight(46)
+        self.pause_btn.clicked.connect(self._toggle_pause)
+        self.quit_btn = QPushButton(S("panel_stop"))
+        self.quit_btn.setObjectName("danger")
+        self.quit_btn.setCursor(Qt.PointingHandCursor)
+        self.quit_btn.setFixedHeight(46)
+        actions.addWidget(self.pause_btn, 1)
+        actions.addWidget(self.quit_btn, 1)
+        v.addLayout(actions)
 
-        # ---- Practice games (prominent: the main thing kids reach for) ----
+        # Practice games (primary accent button)
         self.games_btn = QPushButton("Practice games")
-        self.games_btn.setCursor(Qt.PointingHandCursor)   # primary accent style
-        self.games_btn.setFixedHeight(44)
+        self.games_btn.setCursor(Qt.PointingHandCursor)
+        self.games_btn.setFixedHeight(46)
         self.games_btn.clicked.connect(lambda: open_practice_games())
-        root.addWidget(self.games_btn)
+        v.addWidget(self.games_btn)
 
-        # ---- Settings / Profiles ----
-        tools_row = QHBoxLayout()
-        tools_row.setSpacing(10)
-        self.settings_btn = QPushButton("Settings")
-        self.settings_btn.setObjectName("secondary")
-        self.settings_btn.setCursor(Qt.PointingHandCursor)
-        self.settings_btn.setFixedHeight(38)
-        self.settings_btn.clicked.connect(self._open_settings)
-        self.profiles_btn = QPushButton("Profiles")
-        self.profiles_btn.setObjectName("secondary")
-        self.profiles_btn.setCursor(Qt.PointingHandCursor)
-        self.profiles_btn.setFixedHeight(38)
-        self.profiles_btn.clicked.connect(self._open_profiles)
-        tools_row.addWidget(self.settings_btn)
-        tools_row.addWidget(self.profiles_btn)
-        root.addLayout(tools_row)
+        # "See yourself" - opens a live camera preview that shows which hand is
+        # being detected (helps people line up / understand the tracking).
+        self.camera_btn = QPushButton(S("home_see_yourself"))
+        self.camera_btn.setObjectName("secondary")
+        self.camera_btn.setCursor(Qt.PointingHandCursor)
+        self.camera_btn.setFixedHeight(40)
+        self.camera_btn.clicked.connect(self._toggle_camera)
+        v.addWidget(self.camera_btn)
 
-        # ---- Bottom actions ----
+        # Gestures cheat-sheet - rebuilt to match the active mode and the user's
+        # gesture remapping (see _refresh_cheatsheet). Lives in its own holder so
+        # it can be swapped out without disturbing the rest of the page.
+        v.addWidget(section_label(S("home_cheatsheet_title")))
+        self._cheat_box = QVBoxLayout()
+        self._cheat_box.setContentsMargins(0, 0, 0, 0)
+        self._cheat_box.setSpacing(0)
+        v.addLayout(self._cheat_box)
+        self._cheat_sig = None
+        self._refresh_cheatsheet()
+
+        # Redo setup (secondary, kept low-key)
         self.recal_btn = QPushButton(S("panel_redo"))
         self.recal_btn.setObjectName("secondary")
         self.recal_btn.setCursor(Qt.PointingHandCursor)
         self.recal_btn.setFixedHeight(38)
-        root.addWidget(self.recal_btn)
+        v.addWidget(self.recal_btn)
 
-        self.quit_btn = QPushButton(S("panel_stop"))
-        self.quit_btn.setObjectName("danger")
-        self.quit_btn.setCursor(Qt.PointingHandCursor)
-        self.quit_btn.setFixedHeight(38)
-        root.addWidget(self.quit_btn)
-
-        # Timer for updating status
-        self.timer = QTimer()
-        self.timer.setInterval(200)
-        self.timer.timeout.connect(self._update_status)
-
-    def showEvent(self, event):
-        # Size the window to its content once laid out (so wrapped row titles
-        # are measured at the real width) - no dead space, no clipping.
-        super().showEvent(event)
-        if not getattr(self, "_height_fixed", False):
-            self._height_fixed = True
-            self.setFixedHeight(self.sizeHint().height())
-
-    def _toggle_gaze(self):
-        self.controller.toggle_gaze_detection()
-        self._update_status()
-
-    def _toggle_pause(self):
-        self.controller.toggle_pause()
-        self._update_status()
-
-    def _toggle_dwell(self):
-        self.controller.toggle_dwell_click()
-        self._update_status()
-
-    def _on_pause_switch(self, checked):
-        if self._syncing:
-            return
-        if checked != bool(getattr(self.controller, 'paused', False)):
-            self.controller.toggle_pause()
-        self._update_status()
-
-    def _on_gaze_switch(self, checked):
-        if self._syncing:
-            return
-        if checked != bool(self.controller.gaze_detection_enabled):
-            self.controller.toggle_gaze_detection()
-        self._update_status()
-
-    def _on_dwell_switch(self, checked):
-        if self._syncing:
-            return
-        if checked != bool(self.controller.dwell_click_enabled):
-            self.controller.toggle_dwell_click()
-        self._update_status()
-
-    def _on_limited_switch(self, checked):
-        if self._syncing:
-            return
-        if checked != bool(getattr(self.controller, 'limited_mode', False)):
-            self.controller.toggle_limited_mode()
-        self._update_status()
-
-    def _on_kids_switch(self, checked):
-        if self._syncing:
-            return
-        if checked != bool(getattr(self.controller, 'kids_mode', False)):
-            self.controller.toggle_kids_mode()
-        self._update_status()
-
-    def _open_settings(self):
-        self._open_control('settings')
-
-    def _open_profiles(self):
-        self._open_control('profiles')
-
-    def _open_control(self, page):
-        if getattr(self, 'control_center', None) is None:
-            self.control_center = ControlCenter(self.controller)
-        self.control_center.show_page(page)
-        self.control_center.show()
-        self.control_center.raise_()
-        self.control_center.activateWindow()
-
-    def start(self):
-        self._update_status()
-        self.timer.start()
+        v.addStretch(1)
 
     def _set_badge(self, bg, fg, border=None):
         self.status_badge.setStyleSheet(
             f"background-color: {bg}; color: {fg};"
             f" border: 1px solid {border or bg}; border-radius: 12px; padding: 8px;")
 
-    def _update_status(self):
+    def _toggle_pause(self):
+        self.controller.toggle_pause()
+        self.update_status()
+
+    def update_status(self):
         c = self.controller
         self.profile_label.setText(S("panel_hi", name=c.profile_name or "User"))
-
-        # -- Sync switches to controller state (without firing their handlers) --
-        self._syncing = True
-        self.pause_switch.setChecked(bool(getattr(c, 'paused', False)))
-        self.gaze_switch.setChecked(bool(c.gaze_detection_enabled))
-        self.dwell_switch.setChecked(bool(c.dwell_click_enabled))
-        self.limited_switch.setChecked(bool(getattr(c, 'limited_mode', False)))
-        self.kids_switch.setChecked(bool(getattr(c, 'kids_mode', False)))
-        self._syncing = False
-
-        # -- Status pill --
-        gesture = getattr(c, '_last_gesture', 'no_hand')
-        if getattr(c, 'paused', False):
+        paused = bool(getattr(c, "paused", False))
+        self.pause_btn.setText("Resume" if paused else "Pause")
+        gesture = getattr(c, "_last_gesture", "no_hand")
+        if paused:
             self.status_badge.setText("Paused")
             self._set_badge(T.warn_soft, T.warn)
-        elif gesture == 'no_hand':
+        elif gesture == "no_hand":
             self.status_badge.setText(S("panel_looking"))
             self._set_badge(T.surface, T.text_dim, border=T.border)
         else:
-            friendly = {
-                "cursor_control": S("panel_moving"),
-                "left_click": S("panel_clicked"),
-                "drag_start": S("panel_dragging"),
-                "dragging": S("panel_dragging"),
-                "drag_end": S("panel_drag_done"),
-                "right_click": S("panel_right_clicked"),
-                "two_finger_scroll": S("panel_scrolling"),
-                "scroll_active": S("panel_scrolling"),
-                "pinch_wait": S("panel_pinch_drag"),
-                "dwell_click": S("panel_auto_clicked"),
-                "kids_holding": "Hold to click…",
-                "safety_disabled": S("panel_look_screen"),
-                "idle": S("panel_ready"),
-            }.get(gesture, S("panel_ready"))
-            self.status_badge.setText(friendly)
+            if gesture == "kids_holding":
+                self.status_badge.setText("Hold to click...")
+            else:
+                self.status_badge.setText(S(self._FRIENDLY.get(gesture, "panel_ready")))
             bg, fg = T.accent_soft, T.accent
             if "drag" in gesture.lower():
                 bg, fg = T.drag_soft, T.drag
@@ -2276,30 +2409,259 @@ class StatusPanel(QWidget):
             elif "safety" in gesture.lower():
                 bg, fg = T.warn_soft, T.warn
             self._set_badge(bg, fg)
+        self._refresh_cheatsheet()
 
-    def keyPressEvent(self, event):
-        key = event.key()
-        if key == Qt.Key_G:
-            self._toggle_gaze()
-        elif key == Qt.Key_D:
-            self._toggle_dwell()
-        elif key == Qt.Key_C:
-            self.recal_btn.click()
-        elif key == Qt.Key_Q or key == Qt.Key_Escape:
-            self.quit_btn.click()
+    def _toggle_camera(self):
+        """Open (or close) the live camera preview window. The window is owned by
+        the controller so the tracking loop can feed it frames each tick."""
+        prev = getattr(self.controller, "_preview", None)
+        if prev is None:
+            prev = CameraPreview()
+            self.controller._preview = prev
+        if prev.isVisible():
+            prev.hide()
+        else:
+            prev.show()
+            prev.raise_()
+            prev.activateWindow()
 
-    def closeEvent(self, event):
-        self.timer.stop()
-        cc = getattr(self, 'control_center', None)
-        if cc is not None:
-            cc.close()
-        # Closing the panel by ANY means (incl. the OS X-button) must stop the
-        # tracking loop - otherwise the cursor keeps moving with no UI to stop it.
-        cb = getattr(self, '_on_close_quit', None)
-        if cb is not None:
-            self._on_close_quit = None  # one-shot: on_quit calls panel.close() again
-            cb()
-        event.accept()
+    def _action_verb(self, action):
+        """'left_click' -> 'left-click'; None for the 'do nothing' mapping."""
+        if action == "none":
+            return None
+        key = "verb_" + str(action)
+        verb = S(key)
+        return verb if verb != key else str(action)
+
+    def _cheatsheet_rows(self):
+        """(title, desc) rows describing how to control the cursor RIGHT NOW -
+        depends on the active mode and (in Standard mode) the gesture remapping."""
+        c = self.controller
+        if getattr(c, "kids_mode", False):
+            return [(S("cheat_kids_move_title"), S("cheat_kids_move_desc")),
+                    (S("cheat_kids_click_title"), S("cheat_kids_click_desc")),
+                    (S("cheat_kids_scroll_title"), S("cheat_kids_scroll_desc"))]
+        if getattr(c, "limited_mode", False):
+            return [(S("cheat_limited_move_title"), S("cheat_limited_move_desc")),
+                    (S("cheat_limited_click_title"), S("cheat_limited_click_desc"))]
+        # Standard mode: pinch/fist are remappable, so describe what they do now.
+        ga = getattr(c, "gesture_actions", {}) or {}
+        rows = [(S("feat_move_title"), S("feat_move_desc").replace("\n", " "))]
+        pv = self._action_verb(ga.get("pinch", "left_click"))
+        if pv:
+            rows.append((S("cheat_pinch_title"), S("cheat_pinch_desc", action=pv)))
+        fv = self._action_verb(ga.get("fist", "right_click"))
+        if fv:
+            rows.append((S("cheat_fist_title"), S("cheat_fist_desc", action=fv)))
+        rows.append((S("feat_scroll_title"), S("feat_scroll_desc").replace("\n", " ")))
+        return rows
+
+    def _refresh_cheatsheet(self):
+        """Rebuild the cheat-sheet card only when the mode / remapping changes."""
+        c = self.controller
+        ga = getattr(c, "gesture_actions", {}) or {}
+        sig = (bool(getattr(c, "limited_mode", False)),
+               bool(getattr(c, "kids_mode", False)),
+               ga.get("pinch"), ga.get("fist"))
+        if sig == self._cheat_sig:
+            return
+        self._cheat_sig = sig
+        while self._cheat_box.count():
+            item = self._cheat_box.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
+        card = Card()
+        for title, desc in self._cheatsheet_rows():
+            rw = QWidget()
+            rv = QVBoxLayout(rw)
+            rv.setContentsMargins(16, 11, 16, 11)
+            rv.setSpacing(2)
+            t = QLabel(f"<b>{title}</b>")
+            t.setFont(_font(13))
+            t.setStyleSheet(f"color: {T.text};")
+            rv.addWidget(t)
+            d = QLabel(desc)
+            d.setFont(_font(12))
+            d.setStyleSheet(f"color: {T.text_dim};")
+            d.setWordWrap(True)
+            rv.addWidget(d)
+            card.add_row(rw)
+        self._cheat_box.addWidget(card)
+
+
+class ModesPage(QWidget):
+    """Pick how you control the cursor (Standard / Limited / Kids) and the
+    behavioural extras (pause-when-not-looking, auto-click). This is the single
+    home for what used to be duplicated across the panel and Settings."""
+
+    def __init__(self, controller, parent=None):
+        super().__init__(parent)
+        self.controller = controller
+        self._syncing = False
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        header = QLabel(S("nav_modes"))
+        header.setFont(_font(20, QFont.Bold))
+        header.setStyleSheet(f"color: {T.text}; padding: 18px 24px 6px 24px;")
+        outer.addWidget(header)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        outer.addWidget(scroll, 1)
+
+        content = QWidget()
+        content.setObjectName("scrollcontent")
+        content.setStyleSheet(f"#scrollcontent {{ background-color: {T.bg}; }}")
+        scroll.setWidget(content)
+        v = QVBoxLayout(content)
+        v.setContentsMargins(24, 8, 24, 18)
+        v.setSpacing(16)
+
+        # ---- Control mode (radio-style: exactly one active) ----
+        v.addWidget(section_label("CONTROL MODE"))
+        mcard = Card()
+        self.standard_sw = Switch()
+        self.limited_sw = Switch()
+        self.kids_sw = Switch()
+        mcard.add_row(make_row(S("mode_standard"), self.standard_sw))
+        mcard.add_row(make_row(S("mode_limited"), self.limited_sw))
+        mcard.add_row(make_row(S("mode_kids"), self.kids_sw))
+        v.addWidget(mcard)
+        self.standard_sw.toggled.connect(self._on_standard)
+        self.limited_sw.toggled.connect(self._on_limited)
+        self.kids_sw.toggled.connect(self._on_kids)
+
+        # Limited mode: click sensitivity (only relevant in Limited mode).
+        self.flick_row, self.flick_slider, self.flick_val = self._slider_card(
+            v, "Limited mode: click sensitivity", 1, 10, self._on_flick)
+        # Kids mode: how long to hold a fist before it clicks.
+        self.hold_row, self.hold_slider, self.hold_val = self._slider_card(
+            v, "Kids mode: hold time to click", 5, 40, self._on_hold)
+
+        # ---- Extras (gaze / dwell) ----
+        v.addWidget(section_label("EXTRAS"))
+        ecard = Card()
+        self.gaze_sw = Switch()
+        self.dwell_sw = Switch()
+        ecard.add_row(make_row(_split_toggle(S("panel_gaze_on")), self.gaze_sw))
+        ecard.add_row(make_row(_split_toggle(S("panel_dwell_on")), self.dwell_sw))
+        v.addWidget(ecard)
+        self.gaze_sw.toggled.connect(self._on_gaze)
+        self.dwell_sw.toggled.connect(self._on_dwell)
+
+        v.addStretch(1)
+        self.sync_from_controller()
+
+    def _slider_card(self, parent_layout, caption, lo, hi, slot):
+        """Build a captioned slider inside its own card; returns (card, slider, value_label)."""
+        card = Card()
+        row = QWidget()
+        rv = QVBoxLayout(row)
+        rv.setContentsMargins(14, 10, 14, 10)
+        rv.setSpacing(7)
+        top = QHBoxLayout()
+        top.setSpacing(8)
+        cap = QLabel(caption)
+        cap.setFont(_font(13))
+        cap.setStyleSheet(f"color: {T.text};")
+        val = QLabel("")
+        val.setFont(_font(12, QFont.DemiBold))
+        val.setStyleSheet(f"color: {T.accent};")
+        val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        top.addWidget(cap)
+        top.addStretch(1)
+        top.addWidget(val)
+        rv.addLayout(top)
+        sl = NoScrollSlider(Qt.Horizontal)
+        sl.setMinimum(lo)
+        sl.setMaximum(hi)
+        sl.setSingleStep(1)
+        sl.setPageStep(1)
+        sl.setCursor(Qt.PointingHandCursor)
+        sl.valueChanged.connect(slot)
+        rv.addWidget(sl)
+        card.add_row(row)
+        parent_layout.addWidget(card)
+        return card, sl, val
+
+    # ---- mode handlers (radio behaviour: you select a mode, never deselect) ----
+    def _on_standard(self, checked):
+        if self._syncing:
+            return
+        if checked:
+            if getattr(self.controller, "limited_mode", False):
+                self.controller.toggle_limited_mode()
+            if getattr(self.controller, "kids_mode", False):
+                self.controller.toggle_kids_mode()
+        self.sync_from_controller()
+
+    def _on_limited(self, checked):
+        if self._syncing:
+            return
+        if checked and not getattr(self.controller, "limited_mode", False):
+            self.controller.toggle_limited_mode()  # also turns Kids off
+        self.sync_from_controller()
+
+    def _on_kids(self, checked):
+        if self._syncing:
+            return
+        if checked and not getattr(self.controller, "kids_mode", False):
+            self.controller.toggle_kids_mode()  # also turns Limited off
+        self.sync_from_controller()
+
+    def _on_flick(self, raw):
+        if self._syncing:
+            return
+        self.controller.limited_click_sensitivity = int(raw)
+        self.flick_val.setText(f"{int(raw)}/10")
+
+    def _on_hold(self, raw):
+        if self._syncing:
+            return
+        secs = int(raw) / 10.0
+        self.controller.kids_click_hold = secs
+        self.hold_val.setText(f"{secs:.1f}s")
+
+    def _on_gaze(self, checked):
+        if self._syncing:
+            return
+        if checked != bool(self.controller.gaze_detection_enabled):
+            self.controller.toggle_gaze_detection()
+
+    def _on_dwell(self, checked):
+        if self._syncing:
+            return
+        if checked != bool(self.controller.dwell_click_enabled):
+            self.controller.toggle_dwell_click()
+
+    def sync_from_controller(self):
+        """Reflect controller state into the controls without firing handlers."""
+        c = self.controller
+        self._syncing = True
+        limited = bool(getattr(c, "limited_mode", False))
+        kids = bool(getattr(c, "kids_mode", False))
+        self.standard_sw.setChecked(not limited and not kids)
+        self.limited_sw.setChecked(limited)
+        self.kids_sw.setChecked(kids)
+        self.gaze_sw.setChecked(bool(c.gaze_detection_enabled))
+        self.dwell_sw.setChecked(bool(c.dwell_click_enabled))
+        fs = int(getattr(c, "limited_click_sensitivity", 6))
+        self.flick_slider.setValue(fs)
+        self.flick_val.setText(f"{fs}/10")
+        hs = float(getattr(c, "kids_click_hold", 1.2))
+        self.hold_slider.setValue(int(round(hs * 10)))
+        self.hold_val.setText(f"{hs:.1f}s")
+        self._syncing = False
+        # Grey out a mode's fine-tune slider when that mode isn't active.
+        self.flick_row.setEnabled(limited)
+        self.hold_row.setEnabled(kids)
 
 
 class SettingsPanel(QWidget):
@@ -2327,13 +2689,13 @@ class SettingsPanel(QWidget):
         super().__init__(parent)
         self.controller = controller
         self._loading = False
-        # Embedded as a page inside ControlCenter (no window chrome of its own).
+        # Embedded as a page inside MainWindow (no window chrome of its own).
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
-        header = QLabel("Settings")
+        header = QLabel(S("nav_tune"))
         header.setFont(_font(20, QFont.Bold))
         header.setStyleSheet(f"color: {T.text}; padding: 18px 24px 6px 24px;")
         outer.addWidget(header)
@@ -2410,15 +2772,12 @@ class SettingsPanel(QWidget):
             self.sliders[attr] = (sl, val, scale, is_int, fmt)
         v.addWidget(scard)
 
-        # ---- Clicking (switch rows) ----
+        # ---- Clicking (switch rows). Auto-click on/off lives in Modes now. ----
         v.addWidget(section_label("CLICKING"))
         ccard = Card()
-        self.dwell_cb = Switch()
         self.feedback_cb = Switch()
-        ccard.add_row(make_row("Auto-click by hovering", self.dwell_cb))
         ccard.add_row(make_row("Show a ring when I click", self.feedback_cb))
         v.addWidget(ccard)
-        self.dwell_cb.toggled.connect(self._on_dwell_toggle)
         self.feedback_cb.toggled.connect(self._on_feedback_toggle)
 
         # ---- Gestures (remap the click gestures) ----
@@ -2431,73 +2790,6 @@ class SettingsPanel(QWidget):
         gcard.add_row(make_row("Pinch does", self.pinch_combo))
         gcard.add_row(make_row("Fist does", self.fist_combo))
         v.addWidget(gcard)
-
-        # ---- Accessibility modes (moved to the TOP of Settings below) ----
-        _acc_hdr = section_label("ACCESSIBILITY MODES")
-        lcard = Card()
-        self.kids_cb = Switch()
-        lcard.add_row(make_row("Kids mode  -  move your hand, hold a fist to click, hover edge to scroll", self.kids_cb))
-        self.limited_cb = Switch()
-        lcard.add_row(make_row("Limited mode  -  move + flick-click without opening your hand", self.limited_cb))
-        # Flick-click sensitivity slider (1-10; higher = a smaller finger flick clicks).
-        lrow = QWidget()
-        lrv = QVBoxLayout(lrow)
-        lrv.setContentsMargins(14, 10, 14, 10)
-        lrv.setSpacing(7)
-        ltop = QHBoxLayout()
-        ltop.setSpacing(8)
-        lcap = QLabel("Limited mode: click sensitivity")
-        lcap.setFont(_font(13))
-        lcap.setStyleSheet(f"color: {T.text};")
-        self.flick_val = QLabel("")
-        self.flick_val.setFont(_font(12, QFont.DemiBold))
-        self.flick_val.setStyleSheet(f"color: {T.accent};")
-        self.flick_val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        ltop.addWidget(lcap)
-        ltop.addStretch(1)
-        ltop.addWidget(self.flick_val)
-        lrv.addLayout(ltop)
-        self.flick_slider = NoScrollSlider(Qt.Horizontal)
-        self.flick_slider.setMinimum(1)
-        self.flick_slider.setMaximum(10)
-        self.flick_slider.setSingleStep(1)
-        self.flick_slider.setPageStep(1)
-        self.flick_slider.setCursor(Qt.PointingHandCursor)
-        self.flick_slider.valueChanged.connect(self._on_flick_sensitivity)
-        lrv.addWidget(self.flick_slider)
-        lcard.add_row(lrow)
-        # Kids hold-to-click time (0.5-4.0s, in 0.1s steps).
-        hrow = QWidget()
-        hrv = QVBoxLayout(hrow)
-        hrv.setContentsMargins(14, 10, 14, 10)
-        hrv.setSpacing(7)
-        htop = QHBoxLayout()
-        htop.setSpacing(8)
-        hcap = QLabel("Kids: hold time to click")
-        hcap.setFont(_font(13))
-        hcap.setStyleSheet(f"color: {T.text};")
-        self.hold_val = QLabel("")
-        self.hold_val.setFont(_font(12, QFont.DemiBold))
-        self.hold_val.setStyleSheet(f"color: {T.accent};")
-        self.hold_val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        htop.addWidget(hcap)
-        htop.addStretch(1)
-        htop.addWidget(self.hold_val)
-        hrv.addLayout(htop)
-        self.hold_slider = NoScrollSlider(Qt.Horizontal)
-        self.hold_slider.setMinimum(5)    # 0.5s (value/10)
-        self.hold_slider.setMaximum(40)   # 4.0s
-        self.hold_slider.setSingleStep(1)
-        self.hold_slider.setPageStep(1)
-        self.hold_slider.setCursor(Qt.PointingHandCursor)
-        self.hold_slider.valueChanged.connect(self._on_kids_hold)
-        hrv.addWidget(self.hold_slider)
-        lcard.add_row(hrow)
-        # Put accessibility (Kids/Limited + click time) FIRST in Settings.
-        v.insertWidget(0, lcard)
-        v.insertWidget(0, _acc_hdr)
-        self.kids_cb.toggled.connect(self._on_kids_toggle)
-        self.limited_cb.toggled.connect(self._on_limited_toggle)
 
         v.addStretch(1)
 
@@ -2552,43 +2844,10 @@ class SettingsPanel(QWidget):
         val.setText(fmt(real))
         self._highlight_preset()
 
-    def _on_dwell_toggle(self, checked):
-        if self._loading:
-            return
-        self.controller.dwell_click_enabled = bool(checked)
-        self.controller._reset_dwell()
-
     def _on_feedback_toggle(self, checked):
         if self._loading:
             return
         self.controller.click_feedback_enabled = bool(checked)
-
-    def _on_limited_toggle(self, checked):
-        if self._loading:
-            return
-        if bool(checked) != bool(getattr(self.controller, "limited_mode", False)):
-            self.controller.toggle_limited_mode()
-        self._sync_from_controller()  # reflect mutual exclusivity (kids turned off)
-
-    def _on_kids_toggle(self, checked):
-        if self._loading:
-            return
-        if bool(checked) != bool(getattr(self.controller, "kids_mode", False)):
-            self.controller.toggle_kids_mode()
-        self._sync_from_controller()  # reflect mutual exclusivity (limited turned off)
-
-    def _on_flick_sensitivity(self, raw):
-        if self._loading:
-            return
-        self.controller.limited_click_sensitivity = int(raw)
-        self.flick_val.setText(f"{int(raw)}/10")
-
-    def _on_kids_hold(self, raw):
-        if self._loading:
-            return
-        secs = int(raw) / 10.0
-        self.controller.kids_click_hold = secs
-        self.hold_val.setText(f"{secs:.1f}s")
 
     def _make_action_combo(self, gesture):
         combo = NoScrollComboBox()
@@ -2614,16 +2873,7 @@ class SettingsPanel(QWidget):
             real = getattr(self.controller, attr)
             sl.setValue(int(round(real * scale)))
             val.setText(fmt(real))
-        self.dwell_cb.setChecked(bool(self.controller.dwell_click_enabled))
         self.feedback_cb.setChecked(bool(getattr(self.controller, "click_feedback_enabled", True)))
-        self.kids_cb.setChecked(bool(getattr(self.controller, "kids_mode", False)))
-        self.limited_cb.setChecked(bool(getattr(self.controller, "limited_mode", False)))
-        _fs = int(getattr(self.controller, "limited_click_sensitivity", 6))
-        self.flick_slider.setValue(_fs)
-        self.flick_val.setText(f"{_fs}/10")
-        _hs = float(getattr(self.controller, "kids_click_hold", 1.5))
-        self.hold_slider.setValue(int(round(_hs * 10)))
-        self.hold_val.setText(f"{_hs:.1f}s")
         ga = self.controller.gesture_actions
         for gesture, combo, default in (("pinch", self.pinch_combo, "left_click"),
                                         ("fist", self.fist_combo, "right_click")):
@@ -2648,8 +2898,6 @@ class SettingsPanel(QWidget):
         c.drag_threshold = th["drag_threshold"]
         c.action_cooldown = th["action_cooldown"]
         c.dwell_click_duration = DEFAULT_CONFIG["dwell_click"]["duration"]
-        c.limited_click_sensitivity = DEFAULT_CONFIG["limited_click_sensitivity"]
-        c.kids_click_hold = DEFAULT_CONFIG["kids_click_hold"]
         self._sync_from_controller()
 
     def _on_save(self):
@@ -2665,7 +2913,7 @@ class ProfilesPanel(QWidget):
     def __init__(self, controller, parent=None):
         super().__init__(parent)
         self.controller = controller
-        # Embedded as a page inside ControlCenter (no window chrome of its own).
+        # Embedded as a page inside MainWindow (no window chrome of its own).
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(24, 18, 24, 18)
@@ -2803,16 +3051,167 @@ class ProfilesPanel(QWidget):
             self._refresh()
 
 
-class ControlCenter(QWidget):
-    """A regular desktop window combining Settings and Profiles, with a macOS
-    System-Settings-style sidebar on the left and the selected page on the right."""
+class HelpPage(QWidget):
+    """A built-in guide written for the adults helping a child use AirPoint
+    (teachers / aides / parents): what it does, how to set it up, how each mode
+    and tab works, and what to do when something isn't right. Plain language,
+    no jargon - it's the 'manual' people usually never get."""
+
+    # (section heading, [(row title or None, body), ...]). Kept as plain text so
+    # this reads top-to-bottom like a printed guide.
+    SECTIONS = [
+        ("WHAT AIRPOINT IS", [
+            (None, "AirPoint lets someone move and click the mouse with their hand "
+                   "in the air, using just the webcam - no touching a real mouse or "
+                   "keyboard. It's made for kids and for people who find a normal "
+                   "mouse hard to use."),
+        ]),
+        ("1. BEFORE YOU START", [
+            ("Camera & seating", "Seat the child centred in front of the webcam, about "
+                                 "an arm's length away, with the room reasonably bright "
+                                 "so the camera can see their hand clearly."),
+            ("Check the camera", "On the Home tab tap \"See yourself\". You'll see the "
+                                 "live camera with the detected hand drawn on it, and "
+                                 "whether it's reading the left or right hand. Use it to "
+                                 "line things up before you begin."),
+        ]),
+        ("2. PICK THE RIGHT MODE  (Modes tab)", [
+            ("Standard", "For users who can pinch and make a fist. Pinch thumb + index "
+                         "to click; make a fist to right-click. Needs a quick setup."),
+            ("Limited", "For users with limited finger movement. They just move their "
+                        "hand to move the cursor and flick a finger to click - no need "
+                        "to open the hand. The sensitivity slider sets how easily it "
+                        "clicks. No setup needed."),
+            ("Kids", "The simplest. Move an open hand to move the cursor, hold a fist "
+                     "still for a moment to click, and hover near the top or bottom "
+                     "edge of the screen to scroll. The hold-time slider sets how long. "
+                     "No setup needed."),
+            (None, "Only one mode is active at a time; switch any time on the Modes tab."),
+        ]),
+        ("3. SET IT UP  (calibration)", [
+            ("Standard mode", "Run Home -> Redo Setup for a 30-second calibration so the "
+                              "cursor reaches the whole screen and matches the user's "
+                              "reach and steadiness."),
+            ("Limited & Kids", "No calibration needed - they work right away."),
+        ]),
+        ("4. MAKE IT COMFORTABLE  (Settings tab)", [
+            ("Pointer feel presets", "Quick starting points: Precise, Balanced, Fast, "
+                                     "or High tremor."),
+            ("Cursor speed & Steadiness", "If the cursor shakes, raise Steadiness and "
+                                          "\"Ignore tiny movements\". If it feels laggy, "
+                                          "lower them."),
+            ("Time between clicks", "Raise this if the user clicks by accident too often."),
+            ("Pinch does / Fist does", "Remap what each gesture does - left, right, "
+                                       "double or middle click, or nothing. The Home "
+                                       "guide updates to match your choices."),
+        ]),
+        ("5. EVERY DAY  (Home tab)", [
+            ("Status", "The pill shows what AirPoint is doing right now - moving, "
+                       "clicked, scrolling, and so on."),
+            ("Pause", "Freezes tracking while you reposition the child or take over. "
+                      "Nothing moves until you press Resume."),
+            ("Practice games", "Fun activities to practise pointing and clicking."),
+            ("Stop AirPoint", "Fully closes the app."),
+        ]),
+        ("6. ONE PROFILE PER CHILD  (Profiles tab)", [
+            (None, "Save a separate profile for each child - their calibration, mode and "
+                   "comfort settings. Switch between them, set a default that loads "
+                   "automatically, or rename, duplicate and delete them."),
+        ]),
+        ("IF SOMETHING'S NOT RIGHT", [
+            ("Cursor is jumpy", "Settings tab: raise Steadiness and \"Ignore tiny movements\"."),
+            ("Clicks by accident", "Settings tab: raise \"Time between clicks\". Or press "
+                                   "Pause when it's not actively being used."),
+            ("Can't reach screen edges", "Home -> Redo Setup to recalibrate."),
+            ("Hand isn't detected", "Improve the lighting, move a little closer, and "
+                                    "check \"See yourself\" to confirm the hand is seen."),
+            ("The window vanished", "It's still running. Click the AirPoint icon in the "
+                                    "menu bar (Mac) or system tray (Windows) to bring it "
+                                    "back - or to Stop it."),
+        ]),
+    ]
+
+    def __init__(self, controller, parent=None):
+        super().__init__(parent)
+        self.controller = controller
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        header = QLabel(S("nav_help"))
+        header.setFont(_font(20, QFont.Bold))
+        header.setStyleSheet(f"color: {T.text}; padding: 18px 24px 6px 24px;")
+        outer.addWidget(header)
+
+        intro = QLabel("A quick guide for teachers, aides and parents helping a child use AirPoint.")
+        intro.setFont(_font(12))
+        intro.setWordWrap(True)
+        intro.setStyleSheet(f"color: {T.text_dim}; padding: 0 24px 6px 24px;")
+        outer.addWidget(intro)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        outer.addWidget(scroll, 1)
+
+        content = QWidget()
+        content.setObjectName("scrollcontent")
+        content.setStyleSheet(f"#scrollcontent {{ background-color: {T.bg}; }}")
+        scroll.setWidget(content)
+        v = QVBoxLayout(content)
+        v.setContentsMargins(24, 8, 24, 18)
+        v.setSpacing(14)
+
+        for heading, rows in self.SECTIONS:
+            v.addWidget(section_label(heading))
+            card = Card()
+            for title, body in rows:
+                rw = QWidget()
+                rv = QVBoxLayout(rw)
+                rv.setContentsMargins(16, 11, 16, 11)
+                rv.setSpacing(3)
+                if title:
+                    t = QLabel(f"<b>{title}</b>")
+                    t.setFont(_font(13))
+                    t.setStyleSheet(f"color: {T.text};")
+                    rv.addWidget(t)
+                d = QLabel(body)
+                d.setFont(_font(12))
+                d.setStyleSheet(f"color: {T.text_dim};")
+                d.setWordWrap(True)
+                rv.addWidget(d)
+                card.add_row(rw)
+            v.addWidget(card)
+
+        v.addStretch(1)
+
+
+class MainWindow(QWidget):
+    """The single AirPoint window: a macOS System-Settings-style sidebar
+    (Home / Modes / Settings / Profiles / Help) over one content stack. Replaces the old
+    floating StatusPanel + separate ControlCenter. It is a NORMAL desktop window
+    (taskbar/dock button; goes behind other apps when you click away) plus a
+    system-tray icon, so it's always easy to bring back while tracking keeps
+    running in the background. The tracking loop in run() still talks to it via
+    the same attributes the old StatusPanel exposed (recal_btn, quit_btn, timer,
+    start(), _on_close_quit, control_center), so that wiring is unchanged."""
 
     def __init__(self, controller):
         super().__init__()
         self.controller = controller
         self.setWindowTitle("AirPoint")
-        self.setFixedSize(720, 560)
-        self.setStyleSheet(BASE_QSS + f" ControlCenter {{ background-color: {T.bg}; }}")
+        self.setMinimumSize(760, 600)
+        self.resize(760, 600)
+        self.setWindowIcon(_app_icon())
+        self.setStyleSheet(BASE_QSS + f" MainWindow {{ background-color: {T.bg}; }}")
+
+        # --- Compatibility shims for the tracking loop (run(), ~5069-5142) ---
+        self.control_center = None     # no separate settings window anymore
+        self._on_close_quit = None     # set by run(); honored in closeEvent
+        self._tray_tip_shown = False
 
         h = QHBoxLayout(self)
         h.setContentsMargins(0, 0, 0, 0)
@@ -2834,14 +3233,15 @@ class ControlCenter(QWidget):
         self.nav = QListWidget()
         self.nav.setObjectName("nav")
         self.nav.setFocusPolicy(Qt.NoFocus)
-        self.nav.setFixedHeight(88)
+        self.nav.setFixedHeight(220)
         self.nav.setStyleSheet(
             "#nav { background: transparent; border: none; outline: none; }"
             f" #nav::item {{ padding: 9px 10px; border-radius: 7px; margin: 1px 0;"
             f" color: {T.text}; }}"
             f" #nav::item:hover {{ background-color: {T.surface_hover}; }}"
             f" #nav::item:selected {{ background-color: {T.accent}; color: {T.on_accent}; }}")
-        for name in ("Settings", "Profiles"):
+        for name in (S("nav_home"), S("nav_modes"), S("nav_tune"),
+                     S("nav_profiles"), S("nav_help")):
             self.nav.addItem(name)
         self.nav.currentRowChanged.connect(self.stack_set_index)
         sv.addWidget(self.nav)
@@ -2850,20 +3250,148 @@ class ControlCenter(QWidget):
 
         # ---- Content stack ----
         self.stack = QStackedWidget()
+        self.home_page = HomePage(self.controller)
+        self.modes_page = ModesPage(self.controller)
         self.settings_page = SettingsPanel(self.controller)
         self.profiles_page = ProfilesPanel(self.controller)
-        self.stack.addWidget(self.settings_page)
-        self.stack.addWidget(self.profiles_page)
+        self.help_page = HelpPage(self.controller)
+        for page in (self.home_page, self.modes_page, self.settings_page,
+                     self.profiles_page, self.help_page):
+            self.stack.addWidget(page)
         h.addWidget(self.stack, 1)
-
         self.nav.setCurrentRow(0)
+
+        # Attributes the tracking loop grabs directly.
+        self.recal_btn = self.home_page.recal_btn
+        self.quit_btn = self.home_page.quit_btn
+
+        # One status-refresh timer drives the Home pill, Modes sync and tray label.
+        self.timer = QTimer()
+        self.timer.setInterval(200)
+        self.timer.timeout.connect(self._update_status)
+
+        self._build_tray()
 
     def stack_set_index(self, row):
         if row >= 0:
             self.stack.setCurrentIndex(row)
 
     def show_page(self, page):
-        self.nav.setCurrentRow(0 if page == "settings" else 1)
+        """Back-compat entry point (old code called show_page('settings'/'profiles'))."""
+        idx = {"home": 0, "modes": 1, "settings": 2, "tune": 2,
+               "profiles": 3, "help": 4}.get(page, 0)
+        self.nav.setCurrentRow(idx)
+
+    def start(self):
+        self._update_status()
+        self.timer.start()
+        self.raise_()
+        self.activateWindow()
+
+    def _update_status(self):
+        self.home_page.update_status()
+        self.modes_page.sync_from_controller()
+        self._update_tray_labels()
+
+    # ---------------- System tray ----------------
+    def _build_tray(self):
+        self.tray = None
+        try:
+            if not QSystemTrayIcon.isSystemTrayAvailable():
+                return
+        except Exception:
+            return
+        self.tray = QSystemTrayIcon(self)
+        self.tray.setIcon(_app_icon())
+        self.tray.setToolTip("AirPoint")
+        menu = QMenu()
+        act_show = menu.addAction(S("tray_show"))
+        act_show.triggered.connect(self._show_from_tray)
+        self._tray_pause = menu.addAction(S("tray_pause"))
+        self._tray_pause.triggered.connect(self._toggle_pause_from_tray)
+        menu.addSeparator()
+        act_stop = menu.addAction(S("tray_stop"))
+        act_stop.triggered.connect(self._stop_from_tray)
+        self.tray.setContextMenu(menu)
+        self.tray.activated.connect(self._on_tray_activated)
+        self.tray.show()
+
+    def _update_tray_labels(self):
+        if self.tray is None:
+            return
+        paused = bool(getattr(self.controller, "paused", False))
+        self._tray_pause.setText(S("tray_resume") if paused else S("tray_pause"))
+
+    def _show_from_tray(self):
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
+    def _on_tray_activated(self, reason):
+        if reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick):
+            self._show_from_tray()
+
+    def _toggle_pause_from_tray(self):
+        self.controller.toggle_pause()
+        self._update_status()
+
+    def _stop_from_tray(self):
+        cb = self._on_close_quit
+        if cb is not None:
+            self._on_close_quit = None
+            cb()
+
+    def _notify_running_in_tray(self):
+        if self.tray is None or self._tray_tip_shown:
+            return
+        self._tray_tip_shown = True
+        try:
+            self.tray.showMessage("AirPoint", S("tray_running_tip"),
+                                  QSystemTrayIcon.Information, 4000)
+        except Exception:
+            pass
+
+    def keyPressEvent(self, event):
+        key = event.key()
+        if key == Qt.Key_G:
+            self.controller.toggle_gaze_detection()
+            self._update_status()
+        elif key == Qt.Key_D:
+            self.controller.toggle_dwell_click()
+            self._update_status()
+        elif key == Qt.Key_C:
+            self.recal_btn.click()
+        elif key in (Qt.Key_Q, Qt.Key_Escape):
+            self.quit_btn.click()
+        else:
+            super().keyPressEvent(event)
+
+    def closeEvent(self, event):
+        # on_quit() in run() nulls _on_close_quit before calling close(), so a
+        # None hook means a genuine teardown is in progress -> let it close.
+        cb = self._on_close_quit
+        if cb is None:
+            self.timer.stop()
+            if self.tray is not None:
+                self.tray.hide()
+            event.accept()
+            return
+        if self.tray is not None:
+            # X button = hide to tray; tracking keeps running and Stop lives in
+            # the tray menu, so the cursor is never left moving with no way out.
+            event.ignore()
+            self.hide()
+            self._notify_running_in_tray()
+        else:
+            # No tray to re-summon from: closing must stop tracking (old behavior).
+            self._on_close_quit = None
+            event.accept()
+            cb()
+
+
+# The tracking loop instantiates StatusPanel(self); it is now the consolidated
+# MainWindow. Keeping the name preserves that call site (run(), ~line 5071).
+StatusPanel = MainWindow
 
 
 class ClickFeedbackOverlay(QWidget):
@@ -3156,12 +3684,18 @@ class HandCenterGestureController:
                     pass
         except Exception:
             try:
-                import tkinter as tk
-                from tkinter import messagebox
-                root = tk.Tk()
-                root.withdraw()
-                messagebox.showerror(title, message)
-                root.destroy()
+                if sys.platform == "win32":
+                    # tkinter isn't bundled in the frozen build, so use the Win32
+                    # MessageBox directly - no dependency, always available.
+                    import ctypes
+                    ctypes.windll.user32.MessageBoxW(0, message, title, 0x10)  # MB_ICONERROR
+                else:
+                    import tkinter as tk
+                    from tkinter import messagebox
+                    root = tk.Tk()
+                    root.withdraw()
+                    messagebox.showerror(title, message)
+                    root.destroy()
             except Exception:
                 print(f"{title}\n{message}")
 
@@ -3247,8 +3781,17 @@ class HandCenterGestureController:
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
 
-        # Verify we can actually read a frame (catches macOS permission denied)
-        ret, _ = self.cap.read()
+        # Verify we can actually read a frame. The FIRST read can transiently
+        # return False even when the camera/permission are fine - especially on
+        # Windows, where the default MSMF backend needs a moment to warm up after
+        # open + the resolution change above. Retry for ~2s before concluding the
+        # camera is truly unreadable, so we don't FALSELY report "permission off".
+        ret = False
+        for _attempt in range(40):  # up to ~40 x 50ms = 2s warm-up
+            ret, _frame = self.cap.read()
+            if ret and _frame is not None:
+                break
+            time.sleep(0.05)
         if not ret:
             self.cap.release()
             cam_url = (
@@ -3620,8 +4163,13 @@ class HandCenterGestureController:
             "language": _current_lang,
         }
         path = os.path.join(PROFILES_DIR, f"{self.profile_name}.json")
-        with open(path, "w", encoding="utf-8") as f:
+        # Atomic write: dump to a temp file then os.replace() onto the live file,
+        # so a crash or AV lock mid-write can't truncate/corrupt the profile
+        # (os.replace is atomic and overwrites the destination on Windows too).
+        tmp = f"{path}.tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump(config, f, indent=2)
+        os.replace(tmp, path)
         print(f"Profile '{self.profile_name}' saved to {path}")
 
     # ---- Sensitivity presets ----
@@ -3669,7 +4217,10 @@ class HandCenterGestureController:
     def _sanitize_name(raw):
         """Clean a user-supplied profile name (same rule as the setup wizard)."""
         name = "".join(c for c in str(raw) if c.isalnum() or c in " _-").strip()
-        return name[:20].strip() or "default"
+        name = name[:20].strip() or "default"
+        if name.upper() in _WINDOWS_RESERVED_NAMES:
+            name = f"{name}_"  # avoid Windows device names (CON, NUL, ...)
+        return name
 
     @staticmethod
     def _default_ptr_path():
@@ -3737,10 +4288,10 @@ class HandCenterGestureController:
                 tmp = os.path.join(PROFILES_DIR, f"{old}.__tmp__.json")
                 if os.path.exists(tmp):
                     os.remove(tmp)  # clear any stale temp from a prior failure
-                os.rename(src, tmp)
-                os.rename(tmp, dst)
+                os.replace(src, tmp)
+                os.replace(tmp, dst)
             else:
-                os.rename(src, dst)
+                os.replace(src, dst)
         except OSError as e:
             return False, str(e), old
         if self.profile_name == old:
@@ -3938,6 +4489,7 @@ class HandCenterGestureController:
             idx = min(range(len(centers)),
                       key=lambda i: (centers[i][0] - 0.5) ** 2 + (centers[i][1] - 0.5) ** 2)
         self._tracked_hand_center = centers[idx]
+        self._selected_hand_idx = idx   # for the camera preview's handedness label
         return cands[idx]
 
     def calculate_hand_center(self, landmarks):
@@ -4873,6 +5425,27 @@ class HandCenterGestureController:
             cv2.circle(frame, hand_center_pos, 10, (100, 100, 100), 2)
             cv2.line(frame, thumb_pos, index_pos, (100, 100, 100), 1)
 
+    def _update_preview(self, prev, frame, hand_results):
+        """Draw the detected hand(s) onto the (already mirrored) frame and push it
+        to the 'see yourself' window, with the controlling hand's Left/Right label.
+        Drawing happens in-place; the frame isn't reused after this point."""
+        label = None
+        if hand_results.multi_hand_landmarks:
+            for hlm in hand_results.multi_hand_landmarks:
+                self.mp_draw.draw_landmarks(
+                    frame, hlm, self.mp_hands.HAND_CONNECTIONS,
+                    self.mp_draw.DrawingSpec(color=(255, 143, 171), thickness=2, circle_radius=3),
+                    self.mp_draw.DrawingSpec(color=(120, 170, 255), thickness=2))
+            idx = getattr(self, "_selected_hand_idx", 0)
+            mh = getattr(hand_results, "multi_handedness", None)
+            if mh and 0 <= idx < len(mh):
+                try:
+                    label = mh[idx].classification[0].label
+                except Exception:
+                    label = None
+        prev.show_frame(frame)
+        prev.set_hand(label)
+
     def _tracking_tick(self):
         """Single frame of the tracking loop, driven by QTimer.
         Any exception inside is caught and logged. One bad frame from MediaPipe
@@ -4954,6 +5527,10 @@ class HandCenterGestureController:
                 self._reset_limited()
                 self._reset_kids()
                 self._last_gesture = "paused"
+                _prev = getattr(self, "_preview", None)
+                if _prev is not None and _prev.isVisible():
+                    _prev.show_frame(frame)
+                    _prev.set_hand(None)
                 return
 
             rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -5014,6 +5591,13 @@ class HandCenterGestureController:
                         _app.quit()
 
             self._last_gesture = gesture
+
+            # Feed the "see yourself" preview (only when it's open) with the
+            # detected hand drawn on the frame and which hand is in control.
+            _prev = getattr(self, "_preview", None)
+            if _prev is not None and _prev.isVisible():
+                self._update_preview(_prev, frame, hand_results)
+
             self._tick_error_count = 0
         except SystemExit:
             raise
@@ -5037,8 +5621,19 @@ class HandCenterGestureController:
         """Main control loop using PyQt5 status panel."""
         print("Starting AirPoint controller...")
 
+        # Windows: give the process an explicit AppUserModelID BEFORE any window
+        # is created so the taskbar button and tray icon use AirPoint's own icon
+        # (and group correctly) instead of the generic python/pythonw icon.
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("AirPoint.App")
+            except Exception:
+                pass
+
         app = QApplication.instance() or QApplication(sys.argv)
         apply_app_theme(app)
+        app.setWindowIcon(_app_icon())  # window, taskbar/dock and tray glyph
 
         # --- Profile selection / calibration phase ---
         # If the user marked a profile as default (Profiles panel), auto-load it
@@ -5067,6 +5662,12 @@ class HandCenterGestureController:
             print(f"Profile '{self.profile_name}' active.")
 
         # --- Tracking phase with status panel ---
+        # From here the window can be hidden/minimized to the tray without
+        # quitting - tracking keeps running in the background. The app quits only
+        # via on_quit() (Stop button / tray Stop), which calls app.quit()
+        # explicitly. Set this AFTER the setup wizard above, which relies on
+        # app.exec_() returning when its window closes.
+        app.setQuitOnLastWindowClosed(False)
         self._last_gesture = "no_hand"
         panel = StatusPanel(self)
 
@@ -5127,6 +5728,9 @@ class HandCenterGestureController:
             panel.close()
             if self.overlay is not None:
                 self.overlay.close()
+            _prev = getattr(self, "_preview", None)
+            if _prev is not None:
+                _prev.close()
             app.quit()
 
         panel.recal_btn.clicked.connect(on_recalibrate)

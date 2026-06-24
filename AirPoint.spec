@@ -72,6 +72,8 @@ a = Analysis(
         (os.path.join(PROJECT_DIR, 'VERSION'), '.'),
         # Bundled practice games (opened from the "Practice games" button)
         (os.path.join(PROJECT_DIR, 'game'), 'game'),
+        # App icon for the window / taskbar / system tray (_app_icon())
+        (os.path.join(PROJECT_DIR, 'assets', 'icon.png'), 'assets'),
     ] + mediapipe_datas,
     hiddenimports=[
         'mediapipe',
